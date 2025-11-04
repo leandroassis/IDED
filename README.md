@@ -1,36 +1,268 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 🚁 Simulador de Detecção de Disparos por Enxame de Drones
 
-## Getting Started
+## 📖 Visão Geral
 
-First, run the development server:
+Protótipo de simulador web para demonstração de sistema de detecção acústica de disparos de armas de fogo usando enxame de drones equipados com microfones. O sistema utiliza técnicas de processamento de sinal (Dynamic Time Warping - DTW) para identificar e triangular a posição de disparos.
+
+![Status](https://img.shields.io/badge/status-prototype-yellow)
+![Next.js](https://img.shields.io/badge/Next.js-16-black)
+![TypeScript](https://img.shields.io/badge/TypeScript-5-blue)
+![OpenLayers](https://img.shields.io/badge/OpenLayers-10-1f6b75)
+
+## ✨ Características
+
+- 🗺️ **Interface interativa** com mapa (OpenLayers)
+- 🤖 **Dispersão aleatória** de drones sem sobreposição
+- 🔊 **Simulação acústica** com atenuação e delay realistas
+- 📊 **Análise DTW** para detecção de disparos
+- 📍 **Triangulação TDOA** para localização
+- 🎯 **Visualização** de posições real vs calculada
+
+## 🚀 Quick Start
+
+### Instalação
+
+```bash
+cd simulador
+npm install
+```
+
+### Executar
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Acesse: **http://localhost:3000**
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### Uso Rápido
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+1. Configure **raio** (0.3 km) e **quantidade de drones** (5)
+2. Clique em **"Definir Área de Operação"** → clique no mapa
+3. Clique em **"Simular Disparo"** → clique onde quer simular
+4. Aguarde análise e veja resultado!
 
-## Learn More
+📚 **Guia completo**: [QUICKSTART.md](QUICKSTART.md)
 
-To learn more about Next.js, take a look at the following resources:
+## 📁 Estrutura do Projeto
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```
+simulador/
+├── app/
+│   ├── api/
+│   │   ├── audio/
+│   │   │   ├── analyze/      # Detecção DTW + Triangulação
+│   │   │   └── simulate/     # Simulação de disparo
+│   │   └── drone/
+│   │       └── position/     # Cálculo de posições
+│   ├── page.tsx              # Interface principal
+│   └── layout.tsx
+├── components/
+│   └── map.tsx               # Mapa OpenLayers
+├── lib/
+│   ├── audioUtils.ts         # Processamento de áudio
+│   ├── dtwUtils.ts           # Dynamic Time Warping
+│   ├── geoUtils.ts           # Cálculos geoespaciais
+│   └── config.ts             # Configurações
+├── database/
+│   ├── gunshots/             # Samples de disparos (WAV)
+│   ├── ambient/              # Samples ambiente (WAV)
+│   └── validation/           # Subset para validação
+├── public/
+│   └── drone_icon.svg        # Ícone do drone
+└── scripts/
+    └── loadAudioDatabase.ts  # Exemplo de carregamento
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## 🔧 Tecnologias
 
-## Deploy on Vercel
+| Tecnologia | Uso |
+|------------|-----|
+| **Next.js 16** | Framework React + API Routes |
+| **TypeScript** | Tipagem estática |
+| **OpenLayers** | Renderização de mapas |
+| **Dynamic Time Warping** | Análise de similaridade de áudio |
+| **Tailwind CSS** | Estilização |
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## 📊 Arquitetura
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+### Fluxo de Detecção
+
+```
+1. Usuário define área → Drones são dispersos
+2. Usuário simula disparo → Áudio sintético gerado
+3. Propagação simulada → Delay + Atenuação por distância
+4. Cada drone "captura" → Features extraídas
+5. Análise DTW → Compara com templates
+6. Votação → Maioria decide se é disparo
+7. Triangulação TDOA → Calcula posição
+8. Visualização → Mostra resultado no mapa
+```
+
+### APIs
+
+- **POST /api/drone/position** - Calcula posições dos drones
+- **POST /api/audio/simulate** - Simula disparo e captura
+- **POST /api/audio/analyze** - Submete áudio para análise
+- **GET /api/audio/analyze** - Obtém resultado da detecção
+
+📚 **Documentação completa**: [API_DOCS.md](API_DOCS.md)
+
+## 🎯 Algoritmos Utilizados
+
+### 1. Dispersão de Drones
+- **Algoritmo**: Poisson Disk Sampling (simplificado)
+- **Objetivo**: Posicionar drones sem sobreposição
+- **Distância mínima**: 30 metros
+
+### 2. Simulação Acústica
+- **Velocidade do som**: 343 m/s (20°C)
+- **Atenuação**: Lei do inverso do quadrado
+- **Delay**: `t = distância / 343`
+- **Ruído**: Gaussiano (σ = 0.05)
+
+### 3. Dynamic Time Warping (DTW)
+- **Propósito**: Medir similaridade entre sinais de áudio
+- **Features**: Energia + Zero-crossing rate
+- **Threshold**: 0.3 (configurável)
+- **Votação**: Maioria simples dos drones
+
+### 4. Triangulação (TDOA)
+- **Método**: Time Difference of Arrival
+- **Técnica**: Weighted centroid
+- **Peso**: Inversamente proporcional ao delay
+- **Mínimo**: 3 drones
+
+## 📈 Performance
+
+| Métrica | Valor |
+|---------|-------|
+| Cálculo de posições | < 50ms |
+| Simulação de áudio | ~100ms (5 drones) |
+| Análise DTW | ~200ms/drone |
+| Triangulação | < 10ms |
+| **Total** | **~1-2s** |
+
+## 🎮 Configurações Recomendadas
+
+| Parâmetro | Valor Recomendado | Mínimo | Máximo |
+|-----------|------------------|--------|--------|
+| **Raio** | 0.3 - 0.5 km | 0.1 km | 2 km |
+| **Drones** | 5 - 10 | 3 | 15 |
+| **Distância entre drones** | 30m | - | - |
+
+## 📚 Documentação Adicional
+
+- 📖 [README_PROJETO.md](README_PROJETO.md) - Documentação técnica completa
+- 🚀 [QUICKSTART.md](QUICKSTART.md) - Guia rápido de início
+- 🔌 [API_DOCS.md](API_DOCS.md) - Documentação das APIs
+- 🎵 [database/README.md](database/README.md) - Como popular o database
+
+## 🎨 Interface
+
+### Painel de Controle
+- ⚙️ **Configurações**: Raio e quantidade de drones
+- 🎯 **Ações**: Definir área e simular disparo
+- 📊 **Status**: Info em tempo real
+- 📈 **Resultados**: Detecção e precisão
+
+### Visualização no Mapa
+- 🔵 **Círculo azul**: Área de operação
+- 🚁 **Ícones**: Posição dos drones
+- 🔴 **Ponto vermelho**: Posição REAL do disparo
+- 🟢 **Ponto verde**: Posição CALCULADA
+
+## 🧪 Testando
+
+### Teste 1: Precisão no Centro
+1. Defina área com raio 0.3 km
+2. Use 5+ drones
+3. Simule disparo no **centro** da área azul
+4. **Resultado esperado**: Pontos verde e vermelho muito próximos
+
+### Teste 2: Bordas
+1. Simule disparo na **borda** da área
+2. **Resultado esperado**: Precisão menor (normal)
+
+### Teste 3: Escalabilidade
+1. Teste com 3, 5, 10 drones
+2. **Observação**: Mais drones = maior precisão
+
+## ⚠️ Limitações
+
+Este é um **protótipo educacional**:
+
+- ❌ Áudio sintético (não usa WAV reais)
+- ❌ Propagação simplificada (sem obstáculos)
+- ❌ Templates simulados (não database real)
+- ❌ Triangulação básica (não beamforming completo)
+- ❌ Sem persistência de dados
+
+## 🚀 Melhorias Futuras
+
+- [ ] Integração com database real de áudio
+- [ ] Múltiplas formações de drones
+- [ ] Visualização 3D
+- [ ] Histórico de detecções
+- [ ] Exportação de relatórios
+- [ ] Condições ambientais (vento, temperatura)
+- [ ] Algoritmos avançados de triangulação
+- [ ] WebSockets para real-time
+- [ ] Modo multi-usuário
+
+## 📝 Notas Técnicas
+
+### Sistema de Coordenadas
+- **Entrada/Saída**: WGS84 (GPS padrão)
+- **Mapa**: EPSG:3857 (Web Mercator)
+- **Conversões**: Automáticas pelo OpenLayers
+
+### Processamento de Áudio
+- **Taxa**: 44100 Hz
+- **Formato**: Float32Array (-1.0 a 1.0)
+- **Transmissão**: Base64
+- **Frame**: 2048 samples, hop 512
+
+### Database de Áudio (Opcional)
+Adicione arquivos WAV em:
+- `database/gunshots/` - Disparos reais
+- `database/ambient/` - Sons ambiente
+- `database/validation/` - Testes
+
+Veja `scripts/loadAudioDatabase.ts` para exemplo.
+
+## 🐛 Troubleshooting
+
+### Drones não aparecem
+✅ Clique em "Definir Área de Operação" primeiro
+
+### Botão de disparo desabilitado
+✅ Defina a área de operação antes
+
+### Posição calculada imprecisa
+✅ Normal em simulação - use mais drones
+✅ Simule mais próximo do centro
+
+### Erro de compilação
+```bash
+npm install
+npm run dev
+```
+
+## 🤝 Contribuindo
+
+Este é um protótipo educacional. Sugestões são bem-vindas!
+
+## 📄 Licença
+
+Protótipo educacional - Para fins de demonstração
+
+## 👨‍💻 Autor
+
+Desenvolvido como demonstração de conceito de sistema acústico de detecção de disparos
+
+---
+
+**🎯 Comece agora**: `npm run dev` e abra http://localhost:3000
+
+**❓ Dúvidas**: Veja [QUICKSTART.md](QUICKSTART.md) e [API_DOCS.md](API_DOCS.md)
