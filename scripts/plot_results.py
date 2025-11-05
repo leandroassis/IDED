@@ -6,6 +6,8 @@ Gera gráficos de:
 1. Acurácia (geral, disparo, ambiente) por raio
 2. Erro de posição por raio (com barras de erro)
 3. Tempo de processamento por raio (com barras de erro)
+4. Dashboard combinado com todas as métricas
+5. Matriz de confusão (soundType vs detectedAsGunshot)
 
 Uso:
     python scripts/plot_results.py <caminho_para_summary.csv>
@@ -22,6 +24,7 @@ import numpy as np
 import sys
 import os
 from pathlib import Path
+from glob import glob
 
 # Configuração de estilo acadêmico
 plt.style.use('seaborn-v0_8-whitegrid')
@@ -500,6 +503,182 @@ def plot_combined_dashboard(df, output_dir):
     print(f'✅ Dashboard salvo: {os.path.join(output_dir, "dashboard_metrics.png")}')
 
 
+def plot_confusion_matrix(output_dir):
+    """
+    Gera matriz de confusão agregada de todos os raios testados.
+    
+    Lê todos os arquivos detailed_radius_*.csv e agrega as classificações
+    para criar uma matriz de confusão geral.
+    
+    Args:
+        output_dir: Diretório contendo os arquivos CSV detalhados e onde salvar o gráfico
+    """
+    # Buscar todos os arquivos detailed_radius_*.csv
+    pattern = os.path.join(output_dir, 'detailed_radius_*.csv')
+    detailed_files = glob(pattern)
+    
+    if not detailed_files:
+        print(f'⚠️  Aviso: Nenhum arquivo detailed_radius_*.csv encontrado em {output_dir}')
+        print('   Matriz de confusão não será gerada.')
+        return
+    
+    print(f'\n📊 Gerando matriz de confusão...')
+    print(f'   Arquivos encontrados: {len(detailed_files)}')
+    
+    # Agregar dados de todos os arquivos
+    all_data = []
+    for file_path in detailed_files:
+        try:
+            df_temp = pd.read_csv(file_path)
+            all_data.append(df_temp)
+        except Exception as e:
+            print(f'⚠️  Erro ao ler {file_path}: {e}')
+            continue
+    
+    if not all_data:
+        print('❌ Erro: Não foi possível ler nenhum arquivo detalhado')
+        return
+    
+    # Concatenar todos os dados
+    df_all = pd.concat(all_data, ignore_index=True)
+    
+    # Filtrar apenas testes bem-sucedidos
+    df_all = df_all[df_all['success'] == True].copy()
+    
+    if len(df_all) == 0:
+        print('❌ Erro: Nenhum teste bem-sucedido encontrado')
+        return
+    
+    # Criar matriz de confusão
+    # True Positive: soundType='gunshot' e detectedAsGunshot=True
+    # True Negative: soundType='ambient' e detectedAsGunshot=False
+    # False Positive: soundType='ambient' e detectedAsGunshot=True
+    # False Negative: soundType='gunshot' e detectedAsGunshot=False
+    
+    tp = len(df_all[(df_all['soundType'] == 'gunshot') & (df_all['detectedAsGunshot'] == True)])
+    tn = len(df_all[(df_all['soundType'] == 'ambient') & (df_all['detectedAsGunshot'] == False)])
+    fp = len(df_all[(df_all['soundType'] == 'ambient') & (df_all['detectedAsGunshot'] == True)])
+    fn = len(df_all[(df_all['soundType'] == 'gunshot') & (df_all['detectedAsGunshot'] == False)])
+    
+    # Matriz de confusão
+    confusion_matrix = np.array([[tp, fn],
+                                  [fp, tn]])
+    
+    # Calcular métricas
+    total = tp + tn + fp + fn
+    accuracy = (tp + tn) / total * 100 if total > 0 else 0
+    precision = tp / (tp + fp) * 100 if (tp + fp) > 0 else 0
+    recall = tp / (tp + fn) * 100 if (tp + fn) > 0 else 0
+    f1_score = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
+    
+    # Criar figura com GridSpec para controle preciso do layout
+    fig = plt.figure(figsize=(16, 8))
+    gs = fig.add_gridspec(1, 2, width_ratios=[3, 1], wspace=0.3, 
+                          left=0.1, right=0.95, top=0.9, bottom=0.15)
+    
+    # Subplot principal para a matriz
+    ax = fig.add_subplot(gs[0])
+    
+    # Cores para a matriz (azul escuro para valores altos, branco para baixos)
+    cmap = plt.cm.Blues
+    im = ax.imshow(confusion_matrix, cmap=cmap, aspect='auto', alpha=0.8)
+    
+    # Colorbar dentro do subplot principal
+    from mpl_toolkits.axes_grid1 import make_axes_locatable
+    divider = make_axes_locatable(ax)
+    cax = divider.append_axes("right", size="5%", pad=0.15)
+    cbar = plt.colorbar(im, cax=cax)
+    cbar.set_label('Quantidade de Predições', rotation=270, labelpad=25, 
+                   fontweight='bold', fontsize=11)
+    cbar.ax.tick_params(labelsize=10)
+    
+    # Labels dos eixos
+    classes = ['Disparo', 'Ambiente']
+    ax.set_xticks([0, 1])
+    ax.set_yticks([0, 1])
+    ax.set_xticklabels(classes, fontsize=12, fontweight='bold')
+    ax.set_yticklabels(classes, fontsize=12, fontweight='bold')
+    
+    ax.set_xlabel('Classe Predita', fontweight='bold', fontsize=13, labelpad=10)
+    ax.set_ylabel('Classe Real', fontweight='bold', fontsize=13, labelpad=10)
+    ax.set_title('Matriz de Confusão - Classificação de Sons\n(Agregado de Todos os Raios)', 
+                 fontweight='bold', fontsize=14, pad=20)
+    
+    # Adicionar valores nas células
+    for i in range(2):
+        for j in range(2):
+            value = confusion_matrix[i, j]
+            percentage = (value / total * 100) if total > 0 else 0
+            
+            # Texto principal (valor absoluto)
+            text = ax.text(j, i, f'{value:,}',
+                          ha="center", va="center",
+                          color="white" if value > confusion_matrix.max()/2 else "black",
+                          fontsize=20, fontweight='bold')
+            
+            # Texto secundário (percentual)
+            text2 = ax.text(j, i + 0.25, f'({percentage:.1f}%)',
+                           ha="center", va="center",
+                           color="white" if value > confusion_matrix.max()/2 else "black",
+                           fontsize=11, style='italic')
+    
+    # Adicionar grid sutil
+    ax.set_xticks([0.5], minor=True)
+    ax.set_yticks([0.5], minor=True)
+    ax.grid(which="minor", color="gray", linestyle='-', linewidth=2)
+    ax.tick_params(which="minor", size=0)
+    
+    # Subplot para métricas (à direita)
+    ax_metrics = fig.add_subplot(gs[1])
+    ax_metrics.axis('off')  # Esconder eixos
+    
+    # Adicionar caixa com métricas no subplot dedicado
+    metrics_text = (
+        f'Métricas Gerais\n'
+        f'(n={total:,} testes)\n'
+        f'{"─" * 20}\n\n'
+        f'Acurácia:\n  {accuracy:.2f}%\n\n'
+        f'Precisão:\n  {precision:.2f}%\n\n'
+        f'Recall:\n  {recall:.2f}%\n\n'
+        f'F1-Score:\n  {f1_score:.2f}%'
+    )
+    
+    props = dict(boxstyle='round,pad=1.0', facecolor='#F0F0F0', 
+                 edgecolor='#666666', linewidth=2.5, alpha=0.95)
+    ax_metrics.text(0.1, 0.95, metrics_text, transform=ax_metrics.transAxes,
+                    fontsize=12, verticalalignment='top', horizontalalignment='left',
+                    bbox=props, family='monospace', fontweight='bold')
+    
+    # Adicionar legenda explicativa no subplot de métricas (parte inferior)
+    legend_text = (
+        'Legenda:\n'
+        '─────────\n'
+        'TP: True Positive\n'
+        '     Disparo → Disparo ✓\n\n'
+        'TN: True Negative\n'
+        '     Ambiente → Ambiente ✓\n\n'
+        'FP: False Positive\n'
+        '     Ambiente → Disparo ✗\n\n'
+        'FN: False Negative\n'
+        '     Disparo → Ambiente ✗'
+    )
+    
+    props_legend = dict(boxstyle='round,pad=0.8', facecolor='#FFF8DC', 
+                        edgecolor='#999999', linewidth=2, alpha=0.9)
+    ax_metrics.text(0.1, 0.35, legend_text, transform=ax_metrics.transAxes,
+                    fontsize=9, verticalalignment='top', horizontalalignment='left',
+                    bbox=props_legend, family='sans-serif', linespacing=1.3)
+    
+    plt.savefig(os.path.join(output_dir, 'confusion_matrix.png'), 
+                dpi=300, bbox_inches='tight', facecolor='white')
+    plt.close()
+    
+    print(f'✅ Matriz de confusão salva: {os.path.join(output_dir, "confusion_matrix.png")}')
+    print(f'   Total de testes: {total:,}')
+    print(f'   TP={tp:,} | TN={tn:,} | FP={fp:,} | FN={fn:,}')
+    print(f'   Acurácia: {accuracy:.2f}% | Precisão: {precision:.2f}% | Recall: {recall:.2f}%')
+
+
 def print_summary_stats(df):
     """
     Imprime estatísticas resumidas dos testes.
@@ -585,6 +764,7 @@ def main():
     plot_position_error(df, output_dir)
     plot_processing_time(df, output_dir)
     plot_combined_dashboard(df, output_dir)
+    plot_confusion_matrix(output_dir)
     
     # Imprimir estatísticas
     print_summary_stats(df)
@@ -594,7 +774,8 @@ def main():
     print('   - accuracy_by_radius.png')
     print('   - position_error_by_radius.png')
     print('   - processing_time_by_radius.png')
-    print('   - dashboard_metrics.png\n')
+    print('   - dashboard_metrics.png')
+    print('   - confusion_matrix.png\n')
 
 
 if __name__ == '__main__':
