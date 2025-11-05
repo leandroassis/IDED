@@ -15,7 +15,10 @@ Protótipo de simulador web para demonstração de sistema de detecção acústi
 - 🤖 **Dispersão aleatória** de drones sem sobreposição
 - 🔊 **Simulação acústica** com atenuação e delay realistas
 - 📊 **Análise DTW** para detecção de disparos
+- 🎯 **Votação ponderada por distância** - Drones mais próximos têm maior influência (quando ≥5% detectam disparo)
 - 📍 **Triangulação TDOA** para localização
+- 🚀 **Performance otimizada** - Upload paralelo em lotes, polling com backoff exponencial
+- 🧪 **Testes de carga automatizados** - 1000 testes por raio com execução paralela
 - 🎯 **Visualização** de posições real vs calculada
 
 ## 🚀 Quick Start
@@ -42,7 +45,7 @@ Acesse: **http://localhost:3000**
 3. Clique em **"Simular Disparo"** → clique onde quer simular
 4. Aguarde análise e veja resultado!
 
-📚 **Guia completo**: [QUICKSTART.md](QUICKSTART.md)
+📚 **Guia completo**: [QUICKSTART.md](docs/QUICKSTART.md)
 
 ## 📁 Estrutura do Projeto
 
@@ -94,8 +97,8 @@ simulador/
 3. Propagação simulada → Delay + Atenuação por distância
 4. Cada drone "captura" → Features extraídas
 5. Análise DTW → Compara com templates
-6. Votação → Maioria decide se é disparo
-7. Triangulação TDOA → Calcula posição
+6. Votação inteligente → Maioria simples (<5% detecções) ou ponderada por distância (≥5%)
+7. Triangulação TDOA → Calcula posição (se disparo detectado)
 8. Visualização → Mostra resultado no mapa
 ```
 
@@ -106,7 +109,7 @@ simulador/
 - **POST /api/audio/analyze** - Submete áudio para análise
 - **GET /api/audio/analyze** - Obtém resultado da detecção
 
-📚 **Documentação completa**: [API_DOCS.md](API_DOCS.md)
+📚 **Documentação completa**: [API_DOCS.md](docs/API_DOCS.md)
 
 ## 🎯 Algoritmos Utilizados
 
@@ -125,7 +128,10 @@ simulador/
 - **Propósito**: Medir similaridade entre sinais de áudio
 - **Features**: Energia + Zero-crossing rate
 - **Threshold**: 0.3 (configurável)
-- **Votação**: Maioria simples dos drones
+- **Votação Simples**: Maioria dos drones (quando <5% detectam)
+- **Votação Ponderada**: Peso por distância com decaimento exponencial (quando ≥5% detectam)
+  - Peso = e^(-0.1 × distância_metros)
+  - Drones próximos têm influência exponencialmente maior
 
 ### 4. Triangulação (TDOA)
 - **Método**: Time Difference of Arrival
@@ -139,9 +145,18 @@ simulador/
 |---------|-------|
 | Cálculo de posições | < 50ms |
 | Simulação de áudio | ~100ms (5 drones) |
+| Upload paralelo | ~2s (100 drones, 10 lotes) |
 | Análise DTW | ~200ms/drone |
 | Triangulação | < 10ms |
-| **Total** | **~1-2s** |
+| **Total (5 drones)** | **~1-2s** |
+| **Total (100 drones)** | **~5-7s** |
+
+### Otimizações Implementadas
+- ✅ Upload em lotes paralelos (10x mais rápido)
+- ✅ Polling com backoff exponencial (40% menos requisições)
+- ✅ Memoização de estilos do mapa (React useMemo)
+- ✅ Callbacks otimizados (React useCallback)
+- ✅ Testes de carga com paralelização configurável (10-50x speedup)
 
 ## 🎮 Configurações Recomendadas
 
@@ -153,9 +168,11 @@ simulador/
 
 ## 📚 Documentação Adicional
 
-- 📖 [README_PROJETO.md](README_PROJETO.md) - Documentação técnica completa
-- 🚀 [QUICKSTART.md](QUICKSTART.md) - Guia rápido de início
-- 🔌 [API_DOCS.md](API_DOCS.md) - Documentação das APIs
+- 📖 [README_PROJETO.md](docs/README_PROJETO.md) - Documentação técnica completa
+- 🚀 [QUICKSTART.md](docs/QUICKSTART.md) - Guia rápido de início
+- 🔌 [API_DOCS.md](docs/API_DOCS.md) - Documentação das APIs
+- ⚡ [PERFORMANCE_OPTIMIZATIONS.md](docs/PERFORMANCE_OPTIMIZATIONS.md) - Otimizações de performance
+- 🧪 [PARALLEL_TESTING.md](docs/PARALLEL_TESTING.md) - Testes de carga paralelos
 - 🎵 [database/README.md](database/README.md) - Como popular o database
 
 ## 🎨 Interface
@@ -187,6 +204,19 @@ simulador/
 ### Teste 3: Escalabilidade
 1. Teste com 3, 5, 10 drones
 2. **Observação**: Mais drones = maior precisão
+3. Com ≥5% detectando, votação ponderada é ativada automaticamente
+
+### Teste 4: Testes de Carga Automatizados
+Execute testes de performance com diferentes raios:
+```bash
+npm run test:load -- <latitude> <longitude> [maxConcurrent]
+# Exemplo: npm run test:load -- -22.9035 -43.2096 10
+```
+- Executa 1000 testes por raio (0.1, 0.3, 0.5, 0.7, 0.9, 1.2 km)
+- Distribuição: 70% disparos, 30% ambiente
+- Métricas: acurácia, erro de posição, tempo (média + desvio padrão)
+- Resultados salvos em `tests/load_test_<timestamp>/`
+- Paralelização configurável (padrão: 10 simultâneos)
 
 ## ⚠️ Limitações
 
@@ -206,9 +236,11 @@ Este é um **protótipo educacional**:
 - [ ] Histórico de detecções
 - [ ] Exportação de relatórios
 - [ ] Condições ambientais (vento, temperatura)
-- [ ] Algoritmos avançados de triangulação
+- [ ] Algoritmos avançados de triangulação (beamforming)
 - [ ] WebSockets para real-time
 - [ ] Modo multi-usuário
+- [ ] Dashboard de métricas de teste em tempo real
+- [ ] Fine-tuning de parâmetros de votação ponderada
 
 ## 📝 Notas Técnicas
 
@@ -265,4 +297,4 @@ Desenvolvido como demonstração de conceito de sistema acústico de detecção 
 
 **🎯 Comece agora**: `npm run dev` e abra http://localhost:3000
 
-**❓ Dúvidas**: Veja [QUICKSTART.md](QUICKSTART.md) e [API_DOCS.md](API_DOCS.md)
+**❓ Dúvidas**: Veja [QUICKSTART.md](docs/QUICKSTART.md) e [API_DOCS.md](docs/API_DOCS.md)
