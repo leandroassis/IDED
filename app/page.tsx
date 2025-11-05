@@ -1,11 +1,12 @@
 'use client'
 
-import { useEffect, useState, FC } from "react";
+import { useEffect, useState, FC, useMemo, useCallback } from "react";
 import Map from 'ol/Map';
 import Map1 from "@/components/map";
 import 'ol-ext/dist/ol-ext.css';
 import { playAudioFromBase64 } from '@/lib/audioPlayer';
 import { calculateDistance } from '@/lib/geoUtils';
+import { uploadDroneAudioBatch, pollAnalysisResult } from '@/lib/performanceUtils';
 
 import { fromLonLat, toLonLat } from 'ol/proj';
 import VectorLayer from 'ol/layer/Vector';
@@ -45,6 +46,28 @@ const MapPage: FC = () => {
   const [showDebugPanel, setShowDebugPanel] = useState<boolean>(true); // Modo demo
   const hasResult = Boolean(detectionResult);
 
+  // Memoiza estilo dos drones para evitar recriação
+  const droneStyle = useMemo(() => new Style({
+    image: new Icon({
+      anchor: [0.5, 0.5],
+      anchorXUnits: 'fraction',
+      anchorYUnits: 'fraction',
+      scale: 0.3,
+      src: '/drone_icon.svg',
+    }),
+  }), []);
+
+  // Memoiza estilo do círculo de área
+  const circleStyle = useMemo(() => new Style({
+    stroke: new Stroke({
+      color: 'rgba(0, 123, 255, 0.8)',
+      width: 2,
+    }),
+    fill: new Fill({
+      color: 'rgba(0, 123, 255, 0.1)',
+    }),
+  }), []);
+
   // Renderiza drones no mapa
   useEffect(() => {
     if (!map1Object || dronePositions.length === 0) return;
@@ -65,26 +88,16 @@ const MapPage: FC = () => {
       });
     });
 
-    const droneStyle = new Style({
-      image: new Icon({
-        anchor: [0.5, 0.5],
-        anchorXUnits: 'fraction',
-        anchorYUnits: 'fraction',
-        scale: 0.3,
-        src: '/drone_icon.svg',
-      }),
-    });
-
     const vectorSource = new VectorSource({ features });
     const vectorLayer = new VectorLayer({
       source: vectorSource,
-      style: droneStyle,
+      style: droneStyle, // Usa estilo memoizado
     });
 
     vectorLayer.set('name', 'droneLayer');
     map1Object.addLayer(vectorLayer);
 
-  }, [dronePositions, map1Object]);
+  }, [dronePositions, map1Object, droneStyle]);
 
   // Renderiza área de operação
   useEffect(() => {
@@ -106,26 +119,16 @@ const MapPage: FC = () => {
       geometry: new Circle(center, radiusInMeters),
     });
 
-    const circleStyle = new Style({
-      stroke: new Stroke({
-        color: 'rgba(0, 123, 255, 0.8)',
-        width: 2,
-      }),
-      fill: new Fill({
-        color: 'rgba(0, 123, 255, 0.1)',
-      }),
-    });
-
     const vectorSource = new VectorSource({ features: [circle] });
     const vectorLayer = new VectorLayer({
       source: vectorSource,
-      style: circleStyle,
+      style: circleStyle, // Usa estilo memoizado
     });
 
     vectorLayer.set('name', 'operationArea');
     map1Object.addLayer(vectorLayer);
 
-  }, [operationCenter, radius, map1Object]);
+  }, [operationCenter, radius, map1Object, circleStyle]);
 
   // Renderiza posições de disparo e ambiente
   useEffect(() => {
@@ -219,7 +222,7 @@ const MapPage: FC = () => {
 
   }, [gunshotPosition, ambientPosition, calculatedPosition, map1Object]);
 
-  const changeCoverArea = () => {
+  const changeCoverArea = useCallback(() => {
     if (!map1Object) return;
 
     setMode('settingArea');
@@ -268,9 +271,9 @@ const MapPage: FC = () => {
         console.error('Failed to send position to server:', error);
       }
     });
-  };
+  }, [map1Object, droneCount, radius]);
 
-  const setGunshot = () => {
+  const setGunshot = useCallback(() => {
     if (!map1Object) return;
 
     if (dronePositions.length === 0) {
@@ -329,50 +332,19 @@ const MapPage: FC = () => {
           playAudioFromBase64(simulateData.originalAudio, 0.5).catch(() => {});
         }
 
-        // Envia áudio de cada drone para análise
+        // Envia áudio de cada drone para análise EM PARALELO (lotes de 10)
         const sessionId = `session-${Date.now()}`;
+        await uploadDroneAudioBatch(sessionId, droneAudioList, 10);
+
+        // Polling otimizado com backoff exponencial
+        const analysisData = await pollAnalysisResult(sessionId, dronePositions.length);
         
-        for (let i = 0; i < droneAudioList.length; i++) {
-          const droneAudio = droneAudioList[i];
-          await fetch('/api/audio/analyze', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              sessionId,
-              droneId: droneAudio.droneId,
-              audioData: droneAudio.audioData,
-              position: droneAudio.position,
-              timestamp: Date.now()
-            }),
-          }).catch(() => {});
-        }
-
-        // Aguarda análise completa
-        let analysisReady = false;
-        let attempts = 0;
-        const maxAttempts = 20;
-
-        while (!analysisReady && attempts < maxAttempts) {
-          await new Promise(resolve => setTimeout(resolve, 500));
+        if (analysisData) {
+          setDetectionResult(analysisData);
           
-          const analysisResponse = await fetch(
-            `/api/audio/analyze?sessionId=${sessionId}&expectedDrones=${dronePositions.length}`
-          );
-
-          const analysisData = await analysisResponse.json();
-          
-          if (analysisData.ready) {
-            analysisReady = true;
-            setDetectionResult(analysisData);
-            
-            if (analysisData.calculatedPosition) {
-              setCalculatedPosition(analysisData.calculatedPosition);
-            }
+          if (analysisData.calculatedPosition) {
+            setCalculatedPosition(analysisData.calculatedPosition);
           }
-          
-          attempts++;
         }
 
         setIsAnalyzing(false);
@@ -381,9 +353,9 @@ const MapPage: FC = () => {
         setIsAnalyzing(false);
       }
     });
-  };
+  }, [map1Object, dronePositions, noiseLevel, droneGain]);
 
-  const setAmbient = () => {
+  const setAmbient = useCallback(() => {
     if (!map1Object) return;
 
     if (dronePositions.length === 0) {
@@ -442,50 +414,19 @@ const MapPage: FC = () => {
           playAudioFromBase64(simulateData.originalAudio, 0.5).catch(() => {});
         }
 
-        // Envia áudio de cada drone para análise
+        // Envia áudio de cada drone para análise EM PARALELO (lotes de 10)
         const sessionId = `session-${Date.now()}`;
+        await uploadDroneAudioBatch(sessionId, droneAudioList, 10);
+
+        // Polling otimizado com backoff exponencial
+        const analysisData = await pollAnalysisResult(sessionId, dronePositions.length);
         
-        for (let i = 0; i < droneAudioList.length; i++) {
-          const droneAudio = droneAudioList[i];
-          await fetch('/api/audio/analyze', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              sessionId,
-              droneId: droneAudio.droneId,
-              audioData: droneAudio.audioData,
-              position: droneAudio.position,
-              timestamp: Date.now()
-            }),
-          }).catch(() => {});
-        }
-
-        // Aguarda análise completa
-        let analysisReady = false;
-        let attempts = 0;
-        const maxAttempts = 20;
-
-        while (!analysisReady && attempts < maxAttempts) {
-          await new Promise(resolve => setTimeout(resolve, 500));
+        if (analysisData) {
+          setDetectionResult(analysisData);
           
-          const analysisResponse = await fetch(
-            `/api/audio/analyze?sessionId=${sessionId}&expectedDrones=${dronePositions.length}`
-          );
-
-          const analysisData = await analysisResponse.json();
-          
-          if (analysisData.ready) {
-            analysisReady = true;
-            setDetectionResult(analysisData);
-            
-            if (analysisData.calculatedPosition) {
-              setCalculatedPosition(analysisData.calculatedPosition);
-            }
+          if (analysisData.calculatedPosition) {
+            setCalculatedPosition(analysisData.calculatedPosition);
           }
-          
-          attempts++;
         }
 
         setIsAnalyzing(false);
@@ -494,7 +435,7 @@ const MapPage: FC = () => {
         setIsAnalyzing(false);
       }
     });
-  };
+  }, [map1Object, dronePositions, noiseLevel, droneGain]);
 
   return (
     <div className="flex h-[100vh] bg-gradient-to-br from-slate-100 to-slate-200">
