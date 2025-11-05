@@ -7,7 +7,7 @@
 **Funcionalidades**:
 - ✅ Execução automatizada de 1000 testes por raio
 - ✅ 6 raios testados: 0.1, 0.3, 0.5, 0.7, 0.9, 1.2 km
-- ✅ Cálculo automático de drones: `num_drones = e^(7.5 × raio)` (mínimo 3)
+- ✅ Cálculo automático de drones: `num_drones = min(100, e^(7.5 × raio))` (mínimo 3, máximo 100)
 - ✅ Geração de posições aleatórias dentro do raio
 - ✅ Distribuição 70% disparo / 30% ambiente
 - ✅ Comunicação com API Next.js (sem renderização)
@@ -83,16 +83,16 @@
 
 ### Número de Drones
 ```typescript
-num_drones = max(3, round(e^(7.5 × raio_em_km)))
+num_drones = min(100, max(3, round(e^(7.5 × raio_em_km))))
 ```
 
 **Exemplos**:
 - 0.1 km → 3 drones
 - 0.3 km → 10 drones
 - 0.5 km → 42 drones
-- 0.7 km → 178 drones
-- 0.9 km → 752 drones
-- 1.2 km → 8103 drones
+- 0.7 km → 100 drones
+- 0.9 km → 100 drones
+- 1.2 km → 100 drones
 
 ### Posição Aleatória (Distribuição Uniforme no Círculo)
 ```typescript
@@ -228,10 +228,10 @@ python
 | 0.1km | 3 | 1000 | ~3 min |
 | 0.3km | 10 | 1000 | ~8 min |
 | 0.5km | 42 | 1000 | ~25 min |
-| 0.7km | 178 | 1000 | ~90 min |
-| 0.9km | 752 | 1000 | ~6 horas |
-| 1.2km | 8103 | 1000 | ~48 horas |
-| **TOTAL** | - | **6000** | **~55 horas** |
+| 0.7km | 100 | 1000 | ~50 min |
+| 0.9km | 100 | 1000 | ~2 horas |
+| 1.2km | 100 | 1000 | ~2.5 horas |
+| **TOTAL** | - | **6000** | **~6 horas** |
 
 **IMPORTANTE**: Para testes rápidos, reduza configuração:
 ```typescript

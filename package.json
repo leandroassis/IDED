@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test:load": "tsx scripts/loadTest.ts"
+    "test:load": "tsx scripts/loadTest.ts",
+    "plot:results": "python3 scripts/plot_results.py"
   },
   "dependencies": {
     "dynamic-time-warping": "^1.0.0",

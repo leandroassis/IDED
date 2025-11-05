@@ -474,8 +474,8 @@ async function runTestBatch(
   testDir: string,
   maxConcurrent: number = 10 // Testes paralelos simultâneos
 ): Promise<void> {
-  // Calcula número de drones: e^(7.5*radius), mínimo 3
-  const numDrones = Math.max(3, Math.round(Math.exp(7.5 * radius)));
+  // Calcula número de drones: e^(7.5*radius), mínimo 3, máximo 100
+  const numDrones = Math.min(100, Math.max(3, Math.round(Math.exp(7.5 * radius))));
   
   console.log(`\n🚁 Iniciando testes para raio ${radius}km com ${numDrones} drones...`);
   console.log(`   ⚡ Paralelização: ${maxConcurrent} testes simultâneos`);
@@ -579,6 +579,25 @@ async function main() {
   console.log(`\n✨ TODOS OS TESTES CONCLUÍDOS!`);
   console.log(`⏱️  Tempo total: ${totalTime} minutos`);
   console.log(`📂 Resultados salvos em: ${testDir}`);
+  
+  // Gerar gráficos automaticamente
+  console.log(`\n📊 Gerando gráficos...`);
+  try {
+    const { execSync } = require('child_process');
+    const summaryPath = path.join(testDir, 'summary.csv');
+    const plotCommand = `python3 scripts/plot_results.py "${summaryPath}"`;
+    
+    execSync(plotCommand, { 
+      stdio: 'inherit',
+      cwd: process.cwd()
+    });
+    
+    console.log(`\n✅ Gráficos gerados com sucesso!`);
+    console.log(`📁 Visualize em: ${testDir}/`);
+  } catch (error) {
+    console.error(`\n⚠️  Erro ao gerar gráficos (não crítico):`);
+    console.error(`   Execute manualmente: python3 scripts/plot_results.py ${testDir}/summary.csv`);
+  }
 }
 
 // Executa

@@ -41,19 +41,19 @@ O sistema executa **1000 testes** para cada raio de operação, medindo:
 Calculado automaticamente pela fórmula:
 
 ```
-num_drones = e^(7.5 × raio_em_km)
+num_drones = min(100, e^(7.5 × raio_em_km))
 ```
 
-Mínimo: **3 drones**
+Mínimo: **3 drones** | Máximo: **100 drones**
 
 | Raio (km) | Nº Drones |
 |-----------|-----------|
 | 0.1 | 3 |
 | 0.3 | 10 |
 | 0.5 | 42 |
-| 0.7 | 178 |
-| 0.9 | 752 |
-| 1.2 | 8103 |
+| 0.7 | 100 |
+| 0.9 | 100 |
+| 1.2 | 100 |
 
 ### Distribuição de Sons
 - **70%** disparos

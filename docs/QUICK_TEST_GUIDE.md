@@ -85,15 +85,15 @@ npx tsx scripts/loadTest.ts -47.9292 -15.7801 20
 | 0.1 | 3 | 1000 | ~30 segundos |
 | 0.3 | 10 | 1000 | ~1 min |
 | 0.5 | 42 | 1000 | ~3 min |
-| 0.7 | 178 | 1000 | ~10 min |
-| 0.9 | 752 | 1000 | ~45 min |
-| 1.2 | 8103 | 1000 | ~6 horas |
+| 0.7 | 100 | 1000 | ~5 min |
+| 0.9 | 100 | 1000 | ~12 min |
+| 1.2 | 100 | 1000 | ~15 min |
 
-**TOTAL**: ~7 horas com 10 testes paralelos (vs. ~55 horas sequencial)
+**TOTAL**: ~40 minutos com 10 testes paralelos (vs. ~6 horas sequencial)
 
 **⚡ OTIMIZAÇÃO**: Use mais concorrência para acelerar!
-- 20 paralelos: ~3.5 horas
-- 50 paralelos: ~1.5 hora (se servidor suportar)
+- 20 paralelos: ~20 minutos
+- 50 paralelos: ~10 minutos (se servidor suportar)
 
 ### Para Testes Rápidos
 
