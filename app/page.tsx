@@ -30,6 +30,8 @@ const MapPage: FC = () => {
   const [dronePositions, setDronePositions] = useState<DronePosition[]>([]);
   const [radius, setRadius] = useState<number>(0.3); // Raio em km
   const [droneCount, setDroneCount] = useState<number>(5);
+  const [noiseLevel, setNoiseLevel] = useState<number>(0.01); // 1% de ruído
+  const [droneGain, setDroneGain] = useState<number>(3.0); // Ganho de áudio
   const [operationCenter, setOperationCenter] = useState<GeoPosition | null>(null);
   const [gunshotPosition, setGunshotPosition] = useState<GeoPosition | null>(null);
   const [ambientPosition, setAmbientPosition] = useState<GeoPosition | null>(null);
@@ -39,6 +41,7 @@ const MapPage: FC = () => {
   const [mode, setMode] = useState<'idle' | 'settingArea' | 'settingGunshot' | 'settingAmbient'>('idle');
   const [droneAudioBuffers, setDroneAudioBuffers] = useState<Array<{ droneId: string; audioData: string; distance: number }>>([]);
   const [showDebugPanel, setShowDebugPanel] = useState<boolean>(true); // Modo demo
+  const hasResult = Boolean(detectionResult);
 
   // Renderiza drones no mapa
   useEffect(() => {
@@ -283,6 +286,8 @@ const MapPage: FC = () => {
       console.log('Posição do disparo:', shotPos);
 
       try {
+        console.log('[GUNSHOT] Enviando para API de simulação. DronePositions:', dronePositions.map((p, idx) => `[${idx}]=${p.droneId}`));
+        
         // Simula o disparo e gera áudio para cada drone
         const simulateResponse = await fetch('/api/audio/simulate', {
           method: 'POST',
@@ -294,7 +299,9 @@ const MapPage: FC = () => {
             dronePositions: dronePositions.map(pos => ({
               droneId: pos.droneId,
               position: { lon: pos.lon, lat: pos.lat }
-            }))
+            })),
+            noiseLevel: noiseLevel,
+            droneGain: droneGain
           }),
         });
 
@@ -304,6 +311,12 @@ const MapPage: FC = () => {
 
         const simulateData = await simulateResponse.json();
         console.log('Áudio simulado:', simulateData);
+        console.log('[GUNSHOT] Drones recebidos da API de simulação:', simulateData.droneAudioData?.length);
+        console.log('[GUNSHOT] Lista detalhada:', simulateData.droneAudioData?.map((d: any, idx: number) => `${idx}: ${d.droneId}`));
+
+        // CRÍTICO: Criar cópia local ANTES de setState para evitar race condition
+        const droneAudioList = [...simulateData.droneAudioData];
+        console.log('[GUNSHOT] Cópia criada. Verificação:', droneAudioList.map((d: any, idx: number) => `[${idx}]=${d.droneId}`));
 
         // Armazena áudios dos drones para reprodução debug
         setDroneAudioBuffers(simulateData.droneAudioData);
@@ -319,26 +332,46 @@ const MapPage: FC = () => {
         // Envia áudio de cada drone para análise
         const sessionId = `session-${Date.now()}`;
         
-        for (const droneAudio of simulateData.droneAudioData) {
-          await fetch('/api/audio/analyze', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              sessionId,
-              droneId: droneAudio.droneId,
-              audioData: droneAudio.audioData,
-              position: droneAudio.position,
-              timestamp: Date.now()
-            }),
-          });
+        console.log(`[GUNSHOT] Iniciando envio de ${droneAudioList.length} drones para sessionId: ${sessionId}`);
+        console.log(`[GUNSHOT] Drones na simulação:`, droneAudioList.map((d: any) => d.droneId));
+        
+        for (let i = 0; i < droneAudioList.length; i++) {
+          const droneAudio = droneAudioList[i];
+          console.log(`[GUNSHOT] [${i}/${droneAudioList.length - 1}] Enviando ${droneAudio.droneId}...`);
+          try {
+            const response = await fetch('/api/audio/analyze', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                sessionId,
+                droneId: droneAudio.droneId,
+                audioData: droneAudio.audioData,
+                position: droneAudio.position,
+                timestamp: Date.now()
+              }),
+            });
+            
+            const result = await response.json();
+            if (result.isDuplicate) {
+              console.error(`[GUNSHOT] ⚠️ ${droneAudio.droneId} foi DUPLICATA!`);
+            } else {
+              console.log(`[GUNSHOT] ${droneAudio.droneId} ✓ Resposta:`, result);
+            }
+          } catch (error) {
+            console.error(`[GUNSHOT] ✗ ERRO ao enviar ${droneAudio.droneId}:`, error);
+          }
         }
+        
+        console.log(`[GUNSHOT] Envio completo. Total enviado: ${droneAudioList.length}`);
 
         // Aguarda análise completa
         let analysisReady = false;
         let attempts = 0;
         const maxAttempts = 20;
+
+        console.log(`[GUNSHOT] Aguardando análise - sessionId: ${sessionId}, drones: ${dronePositions.length}`);
 
         while (!analysisReady && attempts < maxAttempts) {
           await new Promise(resolve => setTimeout(resolve, 500));
@@ -348,18 +381,26 @@ const MapPage: FC = () => {
           );
 
           const analysisData = await analysisResponse.json();
+          console.log(`[GUNSHOT] Tentativa ${attempts + 1}:`, analysisData);
           
           if (analysisData.ready) {
             analysisReady = true;
+            console.log('[GUNSHOT] Análise completa! DetectionResult:', analysisData);
             setDetectionResult(analysisData);
             
             if (analysisData.calculatedPosition) {
+              console.log('[GUNSHOT] Posição calculada:', analysisData.calculatedPosition);
               setCalculatedPosition(analysisData.calculatedPosition);
-              console.log('Posição calculada:', analysisData.calculatedPosition);
+            } else {
+              console.warn('[GUNSHOT] Resposta SEM calculatedPosition!');
             }
           }
           
           attempts++;
+        }
+
+        if (!analysisReady) {
+          console.error('[GUNSHOT] TIMEOUT após', maxAttempts, 'tentativas');
         }
 
         setIsAnalyzing(false);
@@ -401,6 +442,8 @@ const MapPage: FC = () => {
       console.log('Posição do som ambiente:', ambientPos);
 
       try {
+        console.log('[AMBIENT] Enviando para API de simulação. DronePositions:', dronePositions.map((p, idx) => `[${idx}]=${p.droneId}`));
+        
         // Simula o som ambiente e gera áudio para cada drone
         const simulateResponse = await fetch('/api/audio/simulate-ambient', {
           method: 'POST',
@@ -412,7 +455,9 @@ const MapPage: FC = () => {
             dronePositions: dronePositions.map(pos => ({
               droneId: pos.droneId,
               position: { lon: pos.lon, lat: pos.lat }
-            }))
+            })),
+            noiseLevel: noiseLevel,
+            droneGain: droneGain
           }),
         });
 
@@ -422,6 +467,12 @@ const MapPage: FC = () => {
 
         const simulateData = await simulateResponse.json();
         console.log('Áudio ambiente simulado:', simulateData);
+        console.log('[AMBIENT] Drones recebidos da API de simulação:', simulateData.droneAudioData?.length);
+        console.log('[AMBIENT] Lista detalhada:', simulateData.droneAudioData?.map((d: any, idx: number) => `${idx}: ${d.droneId}`));
+
+        // CRÍTICO: Criar cópia local ANTES de setState para evitar race condition
+        const droneAudioList = [...simulateData.droneAudioData];
+        console.log('[AMBIENT] Cópia criada. Verificação:', droneAudioList.map((d: any, idx: number) => `[${idx}]=${d.droneId}`));
 
         // Armazena áudios dos drones para reprodução debug
         setDroneAudioBuffers(simulateData.droneAudioData);
@@ -437,26 +488,46 @@ const MapPage: FC = () => {
         // Envia áudio de cada drone para análise
         const sessionId = `session-${Date.now()}`;
         
-        for (const droneAudio of simulateData.droneAudioData) {
-          await fetch('/api/audio/analyze', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              sessionId,
-              droneId: droneAudio.droneId,
-              audioData: droneAudio.audioData,
-              position: droneAudio.position,
-              timestamp: Date.now()
-            }),
-          });
+        console.log(`[AMBIENT] Iniciando envio de ${droneAudioList.length} drones para sessionId: ${sessionId}`);
+        console.log(`[AMBIENT] Drones na simulação:`, droneAudioList.map((d: any) => d.droneId));
+        
+        for (let i = 0; i < droneAudioList.length; i++) {
+          const droneAudio = droneAudioList[i];
+          console.log(`[AMBIENT] [${i}/${droneAudioList.length - 1}] Enviando ${droneAudio.droneId}...`);
+          try {
+            const response = await fetch('/api/audio/analyze', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                sessionId,
+                droneId: droneAudio.droneId,
+                audioData: droneAudio.audioData,
+                position: droneAudio.position,
+                timestamp: Date.now()
+              }),
+            });
+            
+            const result = await response.json();
+            if (result.isDuplicate) {
+              console.error(`[AMBIENT] ⚠️ ${droneAudio.droneId} foi DUPLICATA!`);
+            } else {
+              console.log(`[AMBIENT] ${droneAudio.droneId} ✓ Resposta:`, result);
+            }
+          } catch (error) {
+            console.error(`[AMBIENT] ✗ ERRO ao enviar ${droneAudio.droneId}:`, error);
+          }
         }
+        
+        console.log(`[AMBIENT] Envio completo. Total enviado: ${droneAudioList.length}`);
 
         // Aguarda análise completa
         let analysisReady = false;
         let attempts = 0;
         const maxAttempts = 20;
+
+        console.log(`[AMBIENT] Aguardando análise - sessionId: ${sessionId}, drones: ${dronePositions.length}`);
 
         while (!analysisReady && attempts < maxAttempts) {
           await new Promise(resolve => setTimeout(resolve, 500));
@@ -466,18 +537,26 @@ const MapPage: FC = () => {
           );
 
           const analysisData = await analysisResponse.json();
+          console.log(`[AMBIENT] Tentativa ${attempts + 1}:`, analysisData);
           
           if (analysisData.ready) {
             analysisReady = true;
+            console.log('[AMBIENT] Análise completa! DetectionResult:', analysisData);
             setDetectionResult(analysisData);
             
             if (analysisData.calculatedPosition) {
+              console.log('[AMBIENT] Posição calculada:', analysisData.calculatedPosition);
               setCalculatedPosition(analysisData.calculatedPosition);
-              console.log('Posição calculada:', analysisData.calculatedPosition);
+            } else {
+              console.warn('[AMBIENT] Resposta SEM calculatedPosition!');
             }
           }
           
           attempts++;
+        }
+
+        if (!analysisReady) {
+          console.error('[AMBIENT] TIMEOUT após', maxAttempts, 'tentativas');
         }
 
         setIsAnalyzing(false);
@@ -492,7 +571,7 @@ const MapPage: FC = () => {
   return (
     <div className="flex h-[100vh] bg-gradient-to-br from-slate-100 to-slate-200">
       <div className='flex-1 border-r-2 border-slate-300 shadow-inner'>
-        <Map1 setMap1Object={setMap1Object} />
+        <Map1 onMapCreated={setMap1Object} />
       </div>
       <div className='w-96 bg-gradient-to-b from-slate-800 to-slate-900 p-6 overflow-y-auto shadow-2xl'>
         <div className="mb-6">
@@ -513,30 +592,74 @@ const MapPage: FC = () => {
             <div className="space-y-4">
               <div>
                 <label htmlFor="radiusInput" className="block text-sm font-medium text-slate-300 mb-1.5">
-                  🎯 Raio de Operação (km)
+                  Raio de Operação (km)
                 </label>
                 <input
                   id="radiusInput"
                   type="number"
                   value={radius}
-                  onChange={(e) => setRadius(Number(e.target.value))}
-                  className="w-full bg-slate-800 border border-slate-600 rounded-lg shadow-sm p-2.5 text-white placeholder-slate-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-                  min="0.1"
-                  step="0.1"
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setRadius(v === '' ? 0 : Number(v));
+                  }}
+                  className="w-full bg-slate-800 border border-slate-600 rounded-lg shadow-sm p-2.5 text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                  min={0.1}
+                  step={0.1}
                 />
               </div>
 
               <div>
                 <label htmlFor="droneCountInput" className="block text-sm font-medium text-slate-300 mb-1.5">
-                  🚁 Quantidade de Drones
+                  Quantidade de Drones
                 </label>
                 <input
                   id="droneCountInput"
                   type="number"
                   value={droneCount}
-                  onChange={(e) => setDroneCount(Number(e.target.value))}
-                  className="w-full bg-slate-800 border border-slate-600 rounded-lg shadow-sm p-2.5 text-white placeholder-slate-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-                  min="3"
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setDroneCount(v === '' ? 0 : Number(v));
+                  }}
+                  className="w-full bg-slate-800 border border-slate-600 rounded-lg shadow-sm p-2.5 text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                  min={1}
+                  step={1}
+                />
+              </div>
+
+              <div>
+                <label htmlFor="noiseLevelInput" className="block text-sm font-medium text-slate-300 mb-1.5">
+                  Nível de Ruído (%)
+                </label>
+                <input
+                  id="noiseLevelInput"
+                  type="number"
+                  value={Number((noiseLevel * 100).toFixed(1))}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setNoiseLevel(v === '' ? 0 : Number(v) / 100);
+                  }}
+                  className="w-full bg-slate-800 border border-slate-600 rounded-lg shadow-sm p-2.5 text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                  min={0}
+                  max={100}
+                  step={0.1}
+                />
+              </div>
+
+              <div>
+                <label htmlFor="droneGainInput" className="block text-sm font-medium text-slate-300 mb-1.5">
+                  Ganho de Áudio (x)
+                </label>
+                <input
+                  id="droneGainInput"
+                  type="number"
+                  value={droneGain}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setDroneGain(v === '' ? 1 : Number(v));
+                  }}
+                  className="w-full bg-slate-800 border border-slate-600 rounded-lg shadow-sm p-2.5 text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                  min={0}
+                  step={0.1}
                 />
               </div>
             </div>
@@ -554,36 +677,36 @@ const MapPage: FC = () => {
                 onClick={changeCoverArea} 
                 className={`w-full py-3 px-4 rounded-lg font-medium transition-all duration-200 shadow-md ${
                   mode === 'settingArea' 
-                    ? 'bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow-blue-500/50 ring-2 ring-blue-400 scale-[0.98]' 
-                    : 'bg-gradient-to-r from-blue-500 to-blue-600 text-white hover:from-blue-600 hover:to-blue-700 hover:shadow-lg hover:shadow-blue-500/50 active:scale-[0.98]'
-                } disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:shadow-md`}
+                    ? 'bg-blue-600 text-white ring-2 ring-blue-400' 
+                    : 'bg-blue-500 text-white hover:bg-blue-600 active:scale-[0.98]'
+                } disabled:opacity-50 disabled:cursor-not-allowed`}
                 disabled={mode === 'settingGunshot'}
               >
-                {mode === 'settingArea' ? '📍 Clique no mapa...' : '🗺️ Definir Área de Operação'}
+                {mode === 'settingArea' ? 'Clique no mapa...' : 'Definir Área de Operação'}
               </button>
               
               <button 
                 onClick={setGunshot} 
                 className={`w-full py-3 px-4 rounded-lg font-medium transition-all duration-200 shadow-md ${
                   mode === 'settingGunshot' 
-                    ? 'bg-gradient-to-r from-red-600 to-red-700 text-white shadow-red-500/50 ring-2 ring-red-400 scale-[0.98]' 
-                    : 'bg-gradient-to-r from-red-500 to-red-600 text-white hover:from-red-600 hover:to-red-700 hover:shadow-lg hover:shadow-red-500/50 active:scale-[0.98]'
-                } disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:shadow-md`}
+                    ? 'bg-red-600 text-white ring-2 ring-red-400' 
+                    : 'bg-red-500 text-white hover:bg-red-600 active:scale-[0.98]'
+                } disabled:opacity-50 disabled:cursor-not-allowed`}
                 disabled={dronePositions.length === 0 || mode === 'settingArea' || isAnalyzing}
               >
-                {mode === 'settingGunshot' ? '🎯 Clique na posição...' : '🔫 Simular Disparo'}
+                {mode === 'settingGunshot' ? 'Clique na posição...' : 'Simular Disparo'}
               </button>
 
               <button 
                 onClick={setAmbient} 
                 className={`w-full py-3 px-4 rounded-lg font-medium transition-all duration-200 shadow-md ${
                   mode === 'settingAmbient' 
-                    ? 'bg-gradient-to-r from-amber-600 to-yellow-600 text-white shadow-amber-500/50 ring-2 ring-amber-400 scale-[0.98]' 
-                    : 'bg-gradient-to-r from-amber-500 to-yellow-500 text-white hover:from-amber-600 hover:to-yellow-600 hover:shadow-lg hover:shadow-amber-500/50 active:scale-[0.98]'
-                } disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:shadow-md`}
+                    ? 'bg-amber-600 text-white ring-2 ring-amber-400' 
+                    : 'bg-amber-500 text-white hover:bg-amber-600 active:scale-[0.98]'
+                } disabled:opacity-50 disabled:cursor-not-allowed`}
                 disabled={dronePositions.length === 0 || mode === 'settingArea' || isAnalyzing}
               >
-                {mode === 'settingAmbient' ? '🎯 Clique na posição...' : '🔊 Simular Som Ambiente'}
+                {mode === 'settingAmbient' ? 'Clique na posição...' : 'Simular Som Ambiente'}
               </button>
             </div>
           </div>
@@ -626,17 +749,19 @@ const MapPage: FC = () => {
           )}
 
           {/* Resultados */}
-          {detectionResult && (
-            <div className={`backdrop-blur-sm rounded-lg p-4 border-2 shadow-xl ${
-              detectionResult.isGunshot 
-                ? 'bg-gradient-to-br from-red-500/20 to-red-600/20 border-red-500/60 shadow-red-500/20' 
-                : 'bg-gradient-to-br from-green-500/20 to-green-600/20 border-green-500/60 shadow-green-500/20'
-            }`}>
-              <div className="flex items-center mb-3">
-                <div className={`w-1 h-5 rounded-full mr-2 ${detectionResult.isGunshot ? 'bg-red-500' : 'bg-green-500'}`}></div>
-                <h3 className="font-semibold text-white text-lg">Resultado da Análise</h3>
-              </div>
-              
+          <div className={`backdrop-blur-sm rounded-lg p-4 border-2 shadow-xl ${
+            hasResult
+              ? (detectionResult.isGunshot 
+                  ? 'bg-gradient-to-br from-red-500/20 to-red-600/20 border-red-500/60 shadow-red-500/20' 
+                  : 'bg-gradient-to-br from-green-500/20 to-green-600/20 border-green-500/60 shadow-green-500/20')
+              : 'bg-slate-800/20 border-slate-600/30'
+          }`}>
+            <div className="flex items-center mb-3">
+              <div className={`w-1 h-5 rounded-full mr-2 ${hasResult ? (detectionResult.isGunshot ? 'bg-red-500' : 'bg-green-500') : 'bg-slate-500'}`}></div>
+              <h3 className="font-semibold text-white text-lg">Resultado da Análise</h3>
+            </div>
+
+            {hasResult ? (
               <div className="space-y-3 text-sm">
                 <div className="bg-slate-800/50 rounded-lg p-3">
                   <div className="flex justify-between items-center">
@@ -693,42 +818,46 @@ const MapPage: FC = () => {
                   </div>
                 )}
               </div>
-            </div>
-          )}
+            ) : (
+              <div className="text-slate-400 text-sm">Nenhum resultado. Simule um disparo ou som ambiente para ver a análise aqui.</div>
+            )}
+          </div>
 
           {/* Painel Debug - Áudio dos Drones (Modo Demo) */}
           {showDebugPanel && droneAudioBuffers.length > 0 && (
-            <div className="bg-gradient-to-br from-purple-900/40 to-indigo-900/40 backdrop-blur-sm rounded-lg p-4 border-2 border-purple-500/50 shadow-xl">
+            <div className="bg-slate-700/50 backdrop-blur-sm rounded-lg p-4 border border-slate-600/50 shadow-lg">
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center">
                   <div className="w-1 h-5 bg-purple-500 rounded-full mr-2"></div>
-                  <h3 className="font-semibold text-white text-lg">🎧 Debug: Áudio dos Drones</h3>
+                  <h3 className="font-semibold text-white text-lg">Áudio Capturado pelos Drones</h3>
                 </div>
                 <button
                   onClick={() => setShowDebugPanel(false)}
-                  className="text-slate-400 hover:text-white transition-colors"
+                  className="text-slate-400 hover:text-white transition-colors text-xl leading-none"
                   title="Fechar painel"
                 >
-                  ✕
+                  ×
                 </button>
               </div>
               
-              <div className="space-y-2 max-h-64 overflow-y-auto">
-                {droneAudioBuffers.map((drone, idx) => (
+              <div className="space-y-2 max-h-80 overflow-y-auto pr-2">
+                {droneAudioBuffers
+                  .sort((a, b) => a.distance - b.distance)
+                  .map((drone, idx) => (
                   <div 
                     key={idx}
-                    className="bg-slate-800/60 rounded-lg p-3 border border-slate-600/40 hover:border-purple-500/60 transition-all"
+                    className="bg-slate-800/60 rounded-lg p-3 border border-slate-600/40 hover:border-slate-500 transition-all"
                   >
-                    <div className="flex items-center justify-between">
-                      <div className="flex-1">
-                        <div className="flex items-center space-x-2">
-                          <span className="text-blue-400 font-bold">🚁 {drone.droneId}</span>
-                          <span className="text-slate-400 text-xs">
-                            📍 {drone.distance.toFixed(1)}m
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-white font-semibold">{drone.droneId}</span>
+                          <span className="text-slate-400 text-sm font-mono">
+                            {drone.distance.toFixed(1)}m
                           </span>
                         </div>
-                        <div className="text-xs text-slate-500 mt-1">
-                          4s buffer com propagação simulada
+                        <div className="text-xs text-slate-400">
+                          Áudio de 4s com propagação física
                         </div>
                       </div>
                       <button
@@ -738,9 +867,9 @@ const MapPage: FC = () => {
                             console.error('Erro ao reproduzir:', err);
                           });
                         }}
-                        className="ml-3 px-4 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white rounded-lg font-medium transition-all duration-200 shadow-md hover:shadow-lg hover:shadow-purple-500/50 active:scale-95"
+                        className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white text-sm rounded-lg font-medium transition-colors active:scale-95"
                       >
-                        ▶️ Play
+                        ▶ Reproduzir
                       </button>
                     </div>
                   </div>
@@ -750,9 +879,9 @@ const MapPage: FC = () => {
               <div className="mt-3 pt-3 border-t border-slate-600/50">
                 <div className="flex items-center justify-between text-xs">
                   <span className="text-slate-400">
-                    💡 Ouça como cada drone captou o áudio com atenuação e delay
+                    Ordenado por distância • Áudio inclui propagação real
                   </span>
-                  <span className="text-purple-400 font-bold">
+                  <span className="text-purple-400 font-medium">
                     {droneAudioBuffers.length} drone(s)
                   </span>
                 </div>

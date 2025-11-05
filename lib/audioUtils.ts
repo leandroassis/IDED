@@ -2,6 +2,45 @@
  * Utilidades para processamento de áudio
  */
 
+// ============================================
+// ⚙️ CONFIGURAÇÕES DE SIMULAÇÃO DE PROPAGAÇÃO
+// ============================================
+// 
+// Ajuste estas constantes para calibrar a simulação:
+//
+// NOISE_LEVEL:
+//   - Controla o ruído de fundo nos drones
+//   - 0.001 = quase sem ruído (ideal)
+//   - 0.01  = ruído baixo (recomendado)
+//   - 0.05  = ruído alto (realista mas dificulta detecção)
+//
+// DRONE_AUDIO_GAIN:
+//   - Amplifica o áudio captado pelos drones (NÃO afeta o som reproduzido no navegador)
+//   - 1.0  = sem amplificação (muito fraco à distância)
+//   - 3.0  = amplificação moderada (recomendado)
+//   - 5.0  = amplificação alta (facilita detecção)
+//   - 10.0 = amplificação muito alta (pode distorcer)
+//
+// ============================================
+
+/**
+ * Nível de ruído de fundo adicionado à captura dos drones
+ * Valores típicos: 0.001 (muito baixo) a 0.05 (alto)
+ * Padrão: 0.01 (1% de ruído)
+ */
+export const NOISE_LEVEL = 0.005;
+
+/**
+ * Amplificação aplicada ao áudio captado pelos drones
+ * Útil para compensar atenuação e facilitar análise
+ * NÃO afeta o áudio reproduzido no navegador (apenas drones)
+ * Valores: 1.0 (sem amplificação) a 10.0 (10x mais alto)
+ * Padrão: 3.0 (3x amplificação)
+ */
+export const DRONE_AUDIO_GAIN = 5.0;
+
+// ============================================
+
 export interface AudioFeatures {
   mfcc?: number[];
   energy: number[];
@@ -60,22 +99,41 @@ export function normalize(data: number[]): number[] {
 
 /**
  * Simula captura de áudio por um drone considerando distância
- * Aplica atenuação baseada na distância e adiciona ruído
+ * Aplica atenuação baseada na distância, adiciona ruído e amplificação
+ * 
+ * @param originalAudio - Áudio original da fonte sonora
+ * @param distance - Distância em metros entre fonte e drone
+ * @param noiseLevel - Nível de ruído (opcional, usa NOISE_LEVEL se não especificado)
+ * @returns Áudio captado pelo drone com propagação simulada
  */
 export function simulateDroneAudioCapture(
   originalAudio: Float32Array,
   distance: number, // em metros
-  noiseLevel: number = 0.05
+  noiseLevel?: number
 ): Float32Array {
-  const SPEED_OF_SOUND = 343; // m/s
+  const SPEED_OF_SOUND = 343; // m/s a 20°C
   const sampleRate = 44100; // Hz
   
-  // Calcula delay baseado na distância (Time of Arrival)
+  // Use configuração global se não especificado
+  const effectiveNoiseLevel = noiseLevel !== undefined ? noiseLevel : NOISE_LEVEL;
+  
+  // Calcula delay baseado na distância (Time Difference of Arrival - TDOA)
   const delaySeconds = distance / SPEED_OF_SOUND;
   const delaySamples = Math.round(delaySeconds * sampleRate);
   
   // Atenuação baseada na distância (lei do inverso do quadrado)
-  const attenuation = 1 / (1 + distance / 100);
+  // Adiciona distância de referência (1m) para evitar divisão por zero
+  // e simular uma fonte sonora real
+  const referenceDistance = 1.0; // metros
+  const effectiveDistance = Math.max(distance, referenceDistance);
+  const attenuation = referenceDistance / effectiveDistance;
+  
+  // Atenuação atmosférica adicional (absorção do ar)
+  // Para distâncias maiores, o ar absorve mais energia
+  const atmosphericAbsorption = Math.exp(-0.001 * distance); // Fator empírico
+  
+  // Atenuação total com amplificação para compensar
+  const totalAttenuation = attenuation * atmosphericAbsorption * DRONE_AUDIO_GAIN;
   
   // Cria novo array com delay e atenuação
   const capturedAudio = new Float32Array(originalAudio.length + delaySamples);
@@ -83,9 +141,10 @@ export function simulateDroneAudioCapture(
   for (let i = 0; i < originalAudio.length; i++) {
     const targetIndex = i + delaySamples;
     if (targetIndex < capturedAudio.length) {
-      // Aplica atenuação e adiciona ruído gaussiano
-      const noise = (Math.random() - 0.5) * noiseLevel;
-      capturedAudio[targetIndex] = originalAudio[i] * attenuation + noise;
+      // Aplica atenuação com amplificação e adiciona ruído gaussiano
+      const noise = (Math.random() - 0.5) * effectiveNoiseLevel;
+      const amplifiedSignal = originalAudio[i] * totalAttenuation;
+      capturedAudio[targetIndex] = amplifiedSignal + noise;
     }
   }
   

@@ -36,6 +36,9 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { ambientPosition, dronePositions } = body;
 
+    console.log(`[SIMULATE AMBIENT] Recebido - Drones: ${dronePositions?.length || 0}`);
+    console.log(`[SIMULATE AMBIENT] DroneIds recebidos:`, dronePositions.map((d: any, idx: number) => `[${idx}]=${d.droneId}`));
+
     if (!ambientPosition || !dronePositions || !Array.isArray(dronePositions)) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
@@ -51,12 +54,16 @@ export async function POST(request: NextRequest) {
     
     const { audio: originalAudio, filename } = audioData;
 
+    console.log(`[SIMULATE AMBIENT] Processando ${dronePositions.length} drones...`);
+
     // Simula captura por cada drone
     const droneAudioData = dronePositions.map((dronePos: any) => {
       const distance = calculateDistance(soundPos, dronePos.position);
       
+      console.log(`[SIMULATE AMBIENT] ${dronePos.droneId} - Distância: ${distance.toFixed(2)}m`);
+      
       // Simula captura com atenuação e delay baseado na distância
-      const capturedAudio = simulateDroneAudioCapture(originalAudio, distance, 0.08); // Mais ruído
+      const capturedAudio = simulateDroneAudioCapture(originalAudio, distance);
       
       // Converte para base64
       const audioBase64 = float32ArrayToBase64(capturedAudio);
@@ -68,6 +75,9 @@ export async function POST(request: NextRequest) {
         position: dronePos.position
       };
     });
+
+    console.log(`[SIMULATE AMBIENT] Simulação completa. Áudios gerados: ${droneAudioData.length}`);
+    console.log(`[SIMULATE AMBIENT] DroneIds gerados:`, droneAudioData.map((d: any, idx: number) => `[${idx}]=${d.droneId}`));
 
     // Converte áudio original para base64 para reprodução no navegador
     const originalAudioBase64 = float32ArrayToBase64(originalAudio);
@@ -82,7 +92,7 @@ export async function POST(request: NextRequest) {
     });
 
   } catch (error) {
-    console.error('Erro ao simular som ambiente:', error);
+    console.error('[SIMULATE AMBIENT] Erro ao simular som ambiente:', error);
     return NextResponse.json({ error: 'Failed to simulate ambient sound' }, { status: 500 });
   }
 }

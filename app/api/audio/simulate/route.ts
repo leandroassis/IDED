@@ -36,6 +36,9 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { gunshotPosition, dronePositions } = body;
 
+    console.log(`[SIMULATE] Recebido - Drones: ${dronePositions?.length || 0}`);
+    console.log(`[SIMULATE] DroneIds recebidos:`, dronePositions.map((d: any, idx: number) => `[${idx}]=${d.droneId}`));
+
     if (!gunshotPosition || !dronePositions || !Array.isArray(dronePositions)) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
@@ -51,9 +54,13 @@ export async function POST(request: NextRequest) {
     
     const { audio: originalAudio, filename } = audioData;
 
+    console.log(`[SIMULATE] Processando ${dronePositions.length} drones...`);
+
     // Simula captura por cada drone
     const droneAudioData = dronePositions.map((dronePos: any) => {
       const distance = calculateDistance(shotPos, dronePos.position);
+      
+      console.log(`[SIMULATE] ${dronePos.droneId} - Distância: ${distance.toFixed(2)}m`);
       
       // Simula captura com atenuação e delay baseado na distância
       const capturedAudio = simulateDroneAudioCapture(originalAudio, distance);
@@ -69,6 +76,9 @@ export async function POST(request: NextRequest) {
       };
     });
 
+    console.log(`[SIMULATE] Simulação completa. Áudios gerados: ${droneAudioData.length}`);
+    console.log(`[SIMULATE] DroneIds gerados:`, droneAudioData.map((d: any, idx: number) => `[${idx}]=${d.droneId}`));
+
     // Converte áudio original para base64 para reprodução no navegador
     const originalAudioBase64 = float32ArrayToBase64(originalAudio);
 
@@ -82,7 +92,7 @@ export async function POST(request: NextRequest) {
     });
 
   } catch (error) {
-    console.error('Erro ao simular disparo:', error);
+    console.error('[SIMULATE] Erro ao simular disparo:', error);
     return NextResponse.json({ error: 'Failed to simulate gunshot' }, { status: 500 });
   }
 }

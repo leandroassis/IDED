@@ -59,23 +59,37 @@ export function metersToGeoOffset(
  * Método simplificado usando least squares
  */
 export function triangulateTDOA(droneData: DroneAudioData[]): GeoPosition | null {
+  console.log('[TDOA] Iniciando triangulação com', droneData.length, 'drones');
+  
   if (droneData.length < 3) {
-    console.error('Necessário ao menos 3 drones para triangulação');
+    console.error('[TDOA] Necessário ao menos 3 drones para triangulação');
     return null;
   }
 
   // Ordena drones por tempo de chegada
   const sortedDrones = [...droneData].sort((a, b) => a.timeOfArrival - b.timeOfArrival);
   
+  console.log('[TDOA] Drones ordenados por tempo de chegada:');
+  sortedDrones.forEach(d => {
+    console.log(`  ${d.droneId}: TOA=${d.timeOfArrival.toFixed(4)}s, pos=(${d.position.lat.toFixed(6)}, ${d.position.lon.toFixed(6)})`);
+  });
+  
   // Usa o primeiro drone como referência
   const referenceDrone = sortedDrones[0];
   const referenceTime = referenceDrone.timeOfArrival;
+
+  console.log('[TDOA] Drone de referência:', referenceDrone.droneId, 'TOA:', referenceTime.toFixed(4));
 
   // Calcula diferenças de tempo em relação à referência
   const timeDifferences = sortedDrones.slice(1).map(drone => ({
     drone,
     timeDiff: drone.timeOfArrival - referenceTime
   }));
+
+  console.log('[TDOA] Diferenças de tempo:');
+  timeDifferences.forEach(({ drone, timeDiff }) => {
+    console.log(`  ${drone.droneId}: Δt=${timeDiff.toFixed(4)}s, dist=${(timeDiff * SPEED_OF_SOUND).toFixed(2)}m`);
+  });
 
   // Método simplificado: weighted centroid baseado em time differences
   let totalWeight = 0;
@@ -99,17 +113,25 @@ export function triangulateTDOA(droneData: DroneAudioData[]): GeoPosition | null
       additionalDistance
     );
     
+    console.log(`[TDOA] ${drone.droneId}: peso=${weight.toFixed(3)}, estimatedPos=(${estimatedPos.lat.toFixed(6)}, ${estimatedPos.lon.toFixed(6)})`);
+    
     weightedLon += estimatedPos.lon * weight;
     weightedLat += estimatedPos.lat * weight;
     totalWeight += weight;
   }
 
-  if (totalWeight === 0) return referenceDrone.position;
+  if (totalWeight === 0) {
+    console.warn('[TDOA] Peso total zero, retornando posição do drone de referência');
+    return referenceDrone.position;
+  }
 
-  return {
+  const result = {
     lon: weightedLon / totalWeight,
     lat: weightedLat / totalWeight
   };
+
+  console.log('[TDOA] Posição final calculada:', result);
+  return result;
 }
 
 /**

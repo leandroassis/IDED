@@ -16,21 +16,26 @@ interface Map1Props {
    * Função de callback para definir o objeto do mapa no estado pai.
    * Aceita um objeto Map do OpenLayers ou null.
    */
-  setMap1Object: (map: Map | null) => void;
+  onMapCreated: (map: Map | null) => void;
+  /**
+   * Função de callback para lidar com cliques no mapa.
+   */
+  onMapClick?: (event: any) => void;
 }
 
 /**
  * Componente Map1 tipado com React.FC (Functional Component)
  */
-const Map1: FC<Map1Props> = ({ setMap1Object }) => {
+const Map1: FC<Map1Props> = ({ onMapCreated, onMapClick }) => {
   
   /**
    * Tipa a referência do container do mapa.
    * Ela apontará para um HTMLDivElement e é inicializada como null.
    */
   const map1Container = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<Map | null>(null);
 
-  // on component mount create the map and set the map refrences to the state
+  // Create map only once on mount
   useEffect(() => {
     
     // Garante que o container do mapa esteja renderizado antes de usá-lo
@@ -52,19 +57,30 @@ const Map1: FC<Map1Props> = ({ setMap1Object }) => {
     });
 
     map1.setTarget(map1Container.current);
-    setMap1Object(map1);
+    mapRef.current = map1;
+    onMapCreated(map1);
 
     // on component unmount remove the map refrences to avoid unexpected behaviour
     return () => {
       map1.setTarget(undefined);
-      setMap1Object(null);
+      mapRef.current = null;
+      onMapCreated(null);
     };
-    
-    /**
-     * Adiciona setMap1Object ao array de dependências, pois é uma prop
-     * usada dentro do efeito.
-     */
-  }, [setMap1Object]);
+    // Only run once on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Handle click events separately
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !onMapClick) return;
+
+    map.on('click', onMapClick);
+
+    return () => {
+      map.un('click', onMapClick);
+    };
+  }, [onMapClick]);
 
   return (
     <>
