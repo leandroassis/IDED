@@ -130,6 +130,84 @@ const MapPage: FC = () => {
 
   }, [operationCenter, radius, map1Object, circleStyle]);
 
+  // Renderiza estimativas individuais de cada drone (só se for disparo)
+  useEffect(() => {
+    if (!map1Object || !detectionResult?.droneEstimates || detectionResult.droneEstimates.length === 0 || !detectionResult.isGunshot) return;
+
+    // Remove camada anterior
+    const layersToRemove: any[] = [];
+    map1Object.getLayers().forEach(layer => {
+      if (layer && typeof layer.get === 'function' && layer.get('name') === 'droneEstimates') {
+        layersToRemove.push(layer);
+      }
+    });
+    layersToRemove.forEach(layer => map1Object.removeLayer(layer));
+
+    const features: Feature[] = [];
+    
+    // Paleta de cores consistente para cada drone (baseada no droneId)
+    const getColorForDrone = (droneId: string) => {
+      // Gera hash simples do droneId para cor consistente
+      let hash = 0;
+      for (let i = 0; i < droneId.length; i++) {
+        hash = droneId.charCodeAt(i) + ((hash << 5) - hash);
+      }
+      
+      // Converte hash em cor HSL (varia o hue, mantém saturação e luminosidade)
+      const hue = Math.abs(hash % 360);
+      return `hsl(${hue}, 70%, 50%)`;
+    };
+
+    detectionResult.droneEstimates.forEach((estimate: any) => {
+      const marker = new Feature({
+        geometry: new Point(fromLonLat([estimate.estimatedPosition.lon, estimate.estimatedPosition.lat])),
+        name: `Estimate ${estimate.droneId}`,
+      });
+      
+      const color = getColorForDrone(estimate.droneId);
+      
+      marker.setStyle(new Style({
+        image: new CircleStyle({
+          radius: 5,
+          fill: new Fill({ color: color }),
+          stroke: new Stroke({ color: 'rgba(255, 255, 255, 0.8)', width: 1.5 }),
+        }),
+      }));
+      
+      features.push(marker);
+
+      // Linha conectando drone à sua estimativa
+      const dronePos = dronePositions.find(d => d.droneId === estimate.droneId);
+      if (dronePos) {
+        const line = new Feature({
+          geometry: new LineString([
+            fromLonLat([dronePos.lon, dronePos.lat]),
+            fromLonLat([estimate.estimatedPosition.lon, estimate.estimatedPosition.lat])
+          ]),
+          name: `Line ${estimate.droneId}`,
+        });
+        
+        line.setStyle(new Style({
+          stroke: new Stroke({
+            color: color.replace('50%', '30%'), // Versão mais transparente
+            width: 1,
+            lineDash: [3, 3]
+          }),
+        }));
+        
+        features.push(line);
+      }
+    });
+
+    if (features.length > 0) {
+      const vectorSource = new VectorSource({ features });
+      const vectorLayer = new VectorLayer({ source: vectorSource });
+      vectorLayer.set('name', 'droneEstimates');
+      map1Object.addLayer(vectorLayer);
+    }
+
+  }, [detectionResult, dronePositions, map1Object]);
+
   // Renderiza posições de disparo e ambiente
   useEffect(() => {
     if (!map1Object) return;
@@ -177,8 +255,8 @@ const MapPage: FC = () => {
       features.push(ambientMarker);
     }
 
-    // Posição calculada (verde)
-    if (calculatedPosition) {
+    // Posição calculada (verde) - só mostra se for detectado como disparo
+    if (calculatedPosition && detectionResult?.isGunshot) {
       const calcMarker = new Feature({
         geometry: new Point(fromLonLat([calculatedPosition.lon, calculatedPosition.lat])),
         name: 'Calculated Gunshot',
@@ -220,7 +298,7 @@ const MapPage: FC = () => {
       map1Object.addLayer(vectorLayer);
     }
 
-  }, [gunshotPosition, ambientPosition, calculatedPosition, map1Object]);
+  }, [gunshotPosition, ambientPosition, calculatedPosition, detectionResult, map1Object]);
 
   const changeCoverArea = useCallback(() => {
     if (!map1Object) return;
@@ -640,7 +718,7 @@ const MapPage: FC = () => {
                   </div>
                 </div>
                 
-                {detectionResult.calculatedPosition && (gunshotPosition || ambientPosition) && (
+                {detectionResult.calculatedPosition && detectionResult.isGunshot && (gunshotPosition || ambientPosition) && (
                   <>
                     <div className="bg-slate-800/50 rounded-lg p-3 mt-2">
                       <p className="font-semibold text-white mb-2">📍 Coordenadas:</p>

@@ -4,7 +4,7 @@
 import { NextResponse, NextRequest } from 'next/server';
 import { extractAudioFeatures, normalize, base64ToFloat32Array } from '@/lib/audioUtils';
 import { classifyGunshot } from '@/lib/dtwUtils';
-import { DroneAudioData, triangulateTDOA, GeoPosition } from '@/lib/geoUtils';
+import { DroneAudioData, triangulateTDOA, triangulateTDOAWithDetails, GeoPosition } from '@/lib/geoUtils';
 
 // Armazena dados de áudio recebidos de múltiplos drones
 // Em produção, isso seria um database ou cache (Redis)
@@ -271,24 +271,27 @@ export async function GET(request: NextRequest) {
     let calculatedPosition: GeoPosition | null = null;
     let weightedScore = 0;
     let decisionMethod = 'simple_majority';
+    let droneEstimates: any[] = [];
 
     if (useWeightedVote) {
       console.log(`[ANALYZE] ✅ ${(detectionRate * 100).toFixed(1)}% detectaram disparo (≥ ${(WEIGHTED_VOTE_THRESHOLD * 100)}%) - Usando votação PONDERADA por distância`);
       
-      // Primeiro, faz triangulação preliminar para ter posição estimada
-      const preliminaryPosition = triangulateTDOA(droneDataArray);
+      // Primeiro, faz triangulação preliminar para ter posição estimada COM detalhes
+      const triangulationResult = triangulateTDOAWithDetails(droneDataArray);
       
-      if (preliminaryPosition) {
+      if (triangulationResult) {
+        calculatedPosition = triangulationResult.finalPosition;
+        droneEstimates = triangulationResult.droneEstimates;
+        
         // Usa votação ponderada por distância
         const weightedResult = weightedVoteDecision(
           droneDataArray,
           classifications,
-          preliminaryPosition
+          calculatedPosition
         );
         
         isGunshot = weightedResult.isGunshot;
         weightedScore = weightedResult.weightedScore;
-        calculatedPosition = preliminaryPosition;
         decisionMethod = 'weighted_by_distance';
         
         console.log(`[ANALYZE] Decisão ponderada: isGunshot=${isGunshot}, score=${weightedScore.toFixed(4)}`);
@@ -303,10 +306,14 @@ export async function GET(request: NextRequest) {
       // Voto simples (maioria)
       isGunshot = gunshotDetections >= Math.ceil(droneDataArray.length / 2);
       
-      // Se detectou disparo, triangula posição
+      // Se detectou disparo, triangula posição COM detalhes
       if (isGunshot) {
         console.log('[ANALYZE] Triangulating position...');
-        calculatedPosition = triangulateTDOA(droneDataArray);
+        const triangulationResult = triangulateTDOAWithDetails(droneDataArray);
+        if (triangulationResult) {
+          calculatedPosition = triangulationResult.finalPosition;
+          droneEstimates = triangulationResult.droneEstimates;
+        }
         console.log('[ANALYZE] Calculated position:', calculatedPosition);
       }
     }
@@ -321,6 +328,7 @@ export async function GET(request: NextRequest) {
       gunshotDetections,
       totalDrones: droneDataArray.length,
       calculatedPosition,
+      droneEstimates, // Adicionado: estimativas individuais de cada drone
       decisionMethod, // 'simple_majority', 'weighted_by_distance', ou 'simple_majority_fallback'
       weightedScore: useWeightedVote ? weightedScore : undefined,
       detectionRate: detectionRate,

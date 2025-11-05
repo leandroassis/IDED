@@ -54,11 +54,29 @@ export function metersToGeoOffset(
   }
 }
 
+export interface TriangulationResult {
+  finalPosition: GeoPosition;
+  droneEstimates: Array<{
+    droneId: string;
+    estimatedPosition: GeoPosition;
+    weight: number;
+    timeDiff: number;
+  }>;
+}
+
 /**
  * Triangulação usando Time Difference of Arrival (TDOA)
  * Método simplificado usando least squares
  */
 export function triangulateTDOA(droneData: DroneAudioData[]): GeoPosition | null {
+  const result = triangulateTDOAWithDetails(droneData);
+  return result ? result.finalPosition : null;
+}
+
+/**
+ * Versão detalhada da triangulação que retorna estimativas individuais
+ */
+export function triangulateTDOAWithDetails(droneData: DroneAudioData[]): TriangulationResult | null {
   console.log('[TDOA] Iniciando triangulação com', droneData.length, 'drones');
   
   if (droneData.length < 3) {
@@ -95,6 +113,7 @@ export function triangulateTDOA(droneData: DroneAudioData[]): GeoPosition | null
   let totalWeight = 0;
   let weightedLon = 0;
   let weightedLat = 0;
+  const droneEstimates: TriangulationResult['droneEstimates'] = [];
 
   for (const { drone, timeDiff } of timeDifferences) {
     // Distância adicional percorrida pelo som
@@ -115,6 +134,13 @@ export function triangulateTDOA(droneData: DroneAudioData[]): GeoPosition | null
     
     console.log(`[TDOA] ${drone.droneId}: peso=${weight.toFixed(3)}, estimatedPos=(${estimatedPos.lat.toFixed(6)}, ${estimatedPos.lon.toFixed(6)})`);
     
+    droneEstimates.push({
+      droneId: drone.droneId,
+      estimatedPosition: estimatedPos,
+      weight: weight,
+      timeDiff: timeDiff
+    });
+    
     weightedLon += estimatedPos.lon * weight;
     weightedLat += estimatedPos.lat * weight;
     totalWeight += weight;
@@ -122,16 +148,23 @@ export function triangulateTDOA(droneData: DroneAudioData[]): GeoPosition | null
 
   if (totalWeight === 0) {
     console.warn('[TDOA] Peso total zero, retornando posição do drone de referência');
-    return referenceDrone.position;
+    return {
+      finalPosition: referenceDrone.position,
+      droneEstimates: []
+    };
   }
 
-  const result = {
+  const finalPosition = {
     lon: weightedLon / totalWeight,
     lat: weightedLat / totalWeight
   };
 
-  console.log('[TDOA] Posição final calculada:', result);
-  return result;
+  console.log('[TDOA] Posição final calculada:', finalPosition);
+  
+  return {
+    finalPosition,
+    droneEstimates
+  };
 }
 
 /**
