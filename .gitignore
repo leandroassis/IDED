@@ -43,3 +43,10 @@ yarn-error.log*
 next-env.d.ts
 
 database
+
+# LaTeX intermediate and output files
+*.aux
+*.log
+*.out
+*.tex
+*.pdf
