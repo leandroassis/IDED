@@ -5,12 +5,14 @@ import Map from 'ol/Map';
 import Map1 from "@/components/map";
 import 'ol-ext/dist/ol-ext.css';
 import { playAudioFromBase64 } from '@/lib/audioPlayer';
+import { calculateDistance } from '@/lib/geoUtils';
 
 import { fromLonLat, toLonLat } from 'ol/proj';
 import VectorLayer from 'ol/layer/Vector';
 import VectorSource from 'ol/source/Vector';
 import Feature from 'ol/Feature';
 import Point from 'ol/geom/Point';
+import LineString from 'ol/geom/LineString';
 import Circle from 'ol/geom/Circle';
 import { Style, Icon, Fill, Stroke, Circle as CircleStyle } from 'ol/style';
 
@@ -186,6 +188,26 @@ const MapPage: FC = () => {
         }),
       }));
       features.push(calcMarker);
+      
+      // Linha de erro conectando posição real e calculada
+      const realPos = gunshotPosition || ambientPosition;
+      if (realPos) {
+        const errorLine = new Feature({
+          geometry: new LineString([
+            fromLonLat([realPos.lon, realPos.lat]),
+            fromLonLat([calculatedPosition.lon, calculatedPosition.lat])
+          ]),
+          name: 'Error Line',
+        });
+        errorLine.setStyle(new Style({
+          stroke: new Stroke({
+            color: 'rgba(255, 255, 255, 0.6)',
+            width: 2,
+            lineDash: [5, 5]
+          }),
+        }));
+        features.push(errorLine);
+      }
     }
 
     if (features.length > 0) {
@@ -198,10 +220,7 @@ const MapPage: FC = () => {
   }, [gunshotPosition, ambientPosition, calculatedPosition, map1Object]);
 
   const changeCoverArea = () => {
-    if (!map1Object) {
-      console.error("Map object not initialized");
-      return;
-    }
+    if (!map1Object) return;
 
     setMode('settingArea');
     const mapElement = map1Object.getTargetElement();
@@ -213,8 +232,6 @@ const MapPage: FC = () => {
 
       const coords_mercator = evt.coordinate;
       const coords_lonlat = toLonLat(coords_mercator);
-      
-      console.log('Posição do centro de operação (Lon/Lat):', coords_lonlat);
 
       try {
         const response = await fetch('/api/drone/position', {
@@ -234,7 +251,6 @@ const MapPage: FC = () => {
         }
 
         const result = await response.json();
-        console.log('Server response:', result);
 
         const positions: DronePosition[] = result.x.map((lon: number, index: number) => ({
           lon,
@@ -248,8 +264,6 @@ const MapPage: FC = () => {
         setCalculatedPosition(null);
         setDetectionResult(null);
         
-        console.log('Drones posicionados:', positions);
-        
       } catch (error) {
         console.error('Failed to send position to server:', error);
       }
@@ -257,10 +271,7 @@ const MapPage: FC = () => {
   };
 
   const setGunshot = () => {
-    if (!map1Object) {
-      console.error("Map object not initialized");
-      return;
-    }
+    if (!map1Object) return;
 
     if (dronePositions.length === 0) {
       alert('Configure a área de operação primeiro!');
@@ -283,11 +294,7 @@ const MapPage: FC = () => {
       setCalculatedPosition(null);
       setIsAnalyzing(true);
 
-      console.log('Posição do disparo:', shotPos);
-
       try {
-        console.log('[GUNSHOT] Enviando para API de simulação. DronePositions:', dronePositions.map((p, idx) => `[${idx}]=${p.droneId}`));
-        
         // Simula o disparo e gera áudio para cada drone
         const simulateResponse = await fetch('/api/audio/simulate', {
           method: 'POST',
@@ -310,68 +317,42 @@ const MapPage: FC = () => {
         }
 
         const simulateData = await simulateResponse.json();
-        console.log('Áudio simulado:', simulateData);
-        console.log('[GUNSHOT] Drones recebidos da API de simulação:', simulateData.droneAudioData?.length);
-        console.log('[GUNSHOT] Lista detalhada:', simulateData.droneAudioData?.map((d: any, idx: number) => `${idx}: ${d.droneId}`));
 
         // CRÍTICO: Criar cópia local ANTES de setState para evitar race condition
         const droneAudioList = [...simulateData.droneAudioData];
-        console.log('[GUNSHOT] Cópia criada. Verificação:', droneAudioList.map((d: any, idx: number) => `[${idx}]=${d.droneId}`));
 
         // Armazena áudios dos drones para reprodução debug
         setDroneAudioBuffers(simulateData.droneAudioData);
 
         // Reproduz o áudio original no navegador
         if (simulateData.originalAudio) {
-          console.log(`Reproduzindo áudio: ${simulateData.filename}`);
-          playAudioFromBase64(simulateData.originalAudio, 0.5).catch(err => {
-            console.error('Erro ao reproduzir áudio:', err);
-          });
+          playAudioFromBase64(simulateData.originalAudio, 0.5).catch(() => {});
         }
 
         // Envia áudio de cada drone para análise
         const sessionId = `session-${Date.now()}`;
         
-        console.log(`[GUNSHOT] Iniciando envio de ${droneAudioList.length} drones para sessionId: ${sessionId}`);
-        console.log(`[GUNSHOT] Drones na simulação:`, droneAudioList.map((d: any) => d.droneId));
-        
         for (let i = 0; i < droneAudioList.length; i++) {
           const droneAudio = droneAudioList[i];
-          console.log(`[GUNSHOT] [${i}/${droneAudioList.length - 1}] Enviando ${droneAudio.droneId}...`);
-          try {
-            const response = await fetch('/api/audio/analyze', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({
-                sessionId,
-                droneId: droneAudio.droneId,
-                audioData: droneAudio.audioData,
-                position: droneAudio.position,
-                timestamp: Date.now()
-              }),
-            });
-            
-            const result = await response.json();
-            if (result.isDuplicate) {
-              console.error(`[GUNSHOT] ⚠️ ${droneAudio.droneId} foi DUPLICATA!`);
-            } else {
-              console.log(`[GUNSHOT] ${droneAudio.droneId} ✓ Resposta:`, result);
-            }
-          } catch (error) {
-            console.error(`[GUNSHOT] ✗ ERRO ao enviar ${droneAudio.droneId}:`, error);
-          }
+          await fetch('/api/audio/analyze', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              sessionId,
+              droneId: droneAudio.droneId,
+              audioData: droneAudio.audioData,
+              position: droneAudio.position,
+              timestamp: Date.now()
+            }),
+          }).catch(() => {});
         }
-        
-        console.log(`[GUNSHOT] Envio completo. Total enviado: ${droneAudioList.length}`);
 
         // Aguarda análise completa
         let analysisReady = false;
         let attempts = 0;
         const maxAttempts = 20;
-
-        console.log(`[GUNSHOT] Aguardando análise - sessionId: ${sessionId}, drones: ${dronePositions.length}`);
 
         while (!analysisReady && attempts < maxAttempts) {
           await new Promise(resolve => setTimeout(resolve, 500));
@@ -381,42 +362,29 @@ const MapPage: FC = () => {
           );
 
           const analysisData = await analysisResponse.json();
-          console.log(`[GUNSHOT] Tentativa ${attempts + 1}:`, analysisData);
           
           if (analysisData.ready) {
             analysisReady = true;
-            console.log('[GUNSHOT] Análise completa! DetectionResult:', analysisData);
             setDetectionResult(analysisData);
             
             if (analysisData.calculatedPosition) {
-              console.log('[GUNSHOT] Posição calculada:', analysisData.calculatedPosition);
               setCalculatedPosition(analysisData.calculatedPosition);
-            } else {
-              console.warn('[GUNSHOT] Resposta SEM calculatedPosition!');
             }
           }
           
           attempts++;
         }
 
-        if (!analysisReady) {
-          console.error('[GUNSHOT] TIMEOUT após', maxAttempts, 'tentativas');
-        }
-
         setIsAnalyzing(false);
 
       } catch (error) {
-        console.error('Erro ao processar disparo:', error);
         setIsAnalyzing(false);
       }
     });
   };
 
   const setAmbient = () => {
-    if (!map1Object) {
-      console.error("Map object not initialized");
-      return;
-    }
+    if (!map1Object) return;
 
     if (dronePositions.length === 0) {
       alert('Configure a área de operação primeiro!');
@@ -439,11 +407,7 @@ const MapPage: FC = () => {
       setCalculatedPosition(null);
       setIsAnalyzing(true);
 
-      console.log('Posição do som ambiente:', ambientPos);
-
       try {
-        console.log('[AMBIENT] Enviando para API de simulação. DronePositions:', dronePositions.map((p, idx) => `[${idx}]=${p.droneId}`));
-        
         // Simula o som ambiente e gera áudio para cada drone
         const simulateResponse = await fetch('/api/audio/simulate-ambient', {
           method: 'POST',
@@ -466,68 +430,42 @@ const MapPage: FC = () => {
         }
 
         const simulateData = await simulateResponse.json();
-        console.log('Áudio ambiente simulado:', simulateData);
-        console.log('[AMBIENT] Drones recebidos da API de simulação:', simulateData.droneAudioData?.length);
-        console.log('[AMBIENT] Lista detalhada:', simulateData.droneAudioData?.map((d: any, idx: number) => `${idx}: ${d.droneId}`));
 
         // CRÍTICO: Criar cópia local ANTES de setState para evitar race condition
         const droneAudioList = [...simulateData.droneAudioData];
-        console.log('[AMBIENT] Cópia criada. Verificação:', droneAudioList.map((d: any, idx: number) => `[${idx}]=${d.droneId}`));
 
         // Armazena áudios dos drones para reprodução debug
         setDroneAudioBuffers(simulateData.droneAudioData);
 
         // Reproduz o áudio original no navegador
         if (simulateData.originalAudio) {
-          console.log(`Reproduzindo áudio ambiente: ${simulateData.filename}`);
-          playAudioFromBase64(simulateData.originalAudio, 0.5).catch(err => {
-            console.error('Erro ao reproduzir áudio:', err);
-          });
+          playAudioFromBase64(simulateData.originalAudio, 0.5).catch(() => {});
         }
 
         // Envia áudio de cada drone para análise
         const sessionId = `session-${Date.now()}`;
         
-        console.log(`[AMBIENT] Iniciando envio de ${droneAudioList.length} drones para sessionId: ${sessionId}`);
-        console.log(`[AMBIENT] Drones na simulação:`, droneAudioList.map((d: any) => d.droneId));
-        
         for (let i = 0; i < droneAudioList.length; i++) {
           const droneAudio = droneAudioList[i];
-          console.log(`[AMBIENT] [${i}/${droneAudioList.length - 1}] Enviando ${droneAudio.droneId}...`);
-          try {
-            const response = await fetch('/api/audio/analyze', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({
-                sessionId,
-                droneId: droneAudio.droneId,
-                audioData: droneAudio.audioData,
-                position: droneAudio.position,
-                timestamp: Date.now()
-              }),
-            });
-            
-            const result = await response.json();
-            if (result.isDuplicate) {
-              console.error(`[AMBIENT] ⚠️ ${droneAudio.droneId} foi DUPLICATA!`);
-            } else {
-              console.log(`[AMBIENT] ${droneAudio.droneId} ✓ Resposta:`, result);
-            }
-          } catch (error) {
-            console.error(`[AMBIENT] ✗ ERRO ao enviar ${droneAudio.droneId}:`, error);
-          }
+          await fetch('/api/audio/analyze', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              sessionId,
+              droneId: droneAudio.droneId,
+              audioData: droneAudio.audioData,
+              position: droneAudio.position,
+              timestamp: Date.now()
+            }),
+          }).catch(() => {});
         }
-        
-        console.log(`[AMBIENT] Envio completo. Total enviado: ${droneAudioList.length}`);
 
         // Aguarda análise completa
         let analysisReady = false;
         let attempts = 0;
         const maxAttempts = 20;
-
-        console.log(`[AMBIENT] Aguardando análise - sessionId: ${sessionId}, drones: ${dronePositions.length}`);
 
         while (!analysisReady && attempts < maxAttempts) {
           await new Promise(resolve => setTimeout(resolve, 500));
@@ -537,32 +475,22 @@ const MapPage: FC = () => {
           );
 
           const analysisData = await analysisResponse.json();
-          console.log(`[AMBIENT] Tentativa ${attempts + 1}:`, analysisData);
           
           if (analysisData.ready) {
             analysisReady = true;
-            console.log('[AMBIENT] Análise completa! DetectionResult:', analysisData);
             setDetectionResult(analysisData);
             
             if (analysisData.calculatedPosition) {
-              console.log('[AMBIENT] Posição calculada:', analysisData.calculatedPosition);
               setCalculatedPosition(analysisData.calculatedPosition);
-            } else {
-              console.warn('[AMBIENT] Resposta SEM calculatedPosition!');
             }
           }
           
           attempts++;
         }
 
-        if (!analysisReady) {
-          console.error('[AMBIENT] TIMEOUT após', maxAttempts, 'tentativas');
-        }
-
         setIsAnalyzing(false);
 
       } catch (error) {
-        console.error('Erro ao processar som ambiente:', error);
         setIsAnalyzing(false);
       }
     });
@@ -711,31 +639,6 @@ const MapPage: FC = () => {
             </div>
           </div>
 
-          {/* Status */}
-          <div className="bg-slate-700/50 backdrop-blur-sm rounded-lg p-4 border border-slate-600/50 shadow-lg">
-            <div className="flex items-center mb-3">
-              <div className="w-1 h-5 bg-purple-500 rounded-full mr-2"></div>
-              <h3 className="font-semibold text-white text-lg">Status do Sistema</h3>
-            </div>
-            
-            <div className="space-y-2 text-sm">
-              <div className="flex justify-between items-center bg-slate-800/50 rounded p-2">
-                <span className="text-slate-300">Drones ativos:</span>
-                <span className="text-white font-bold bg-blue-600 px-2.5 py-0.5 rounded-full">{dronePositions.length}</span>
-              </div>
-              <div className="flex justify-between items-center bg-slate-800/50 rounded p-2">
-                <span className="text-slate-300">Centro de operação:</span>
-                <span className={`font-bold ${operationCenter ? 'text-green-400' : 'text-red-400'}`}>
-                  {operationCenter ? '✓ Definido' : '✗ Não definido'}
-                </span>
-              </div>
-              <div className="flex justify-between items-center bg-slate-800/50 rounded p-2">
-                <span className="text-slate-300">Raio atual:</span>
-                <span className="text-white font-bold">{radius} km</span>
-              </div>
-            </div>
-          </div>
-
           {/* Análise em progresso */}
           {isAnalyzing && (
             <div className="bg-gradient-to-r from-amber-500/20 to-orange-500/20 backdrop-blur-sm rounded-lg p-4 border-2 border-amber-500/50 shadow-lg animate-pulse">
@@ -797,25 +700,40 @@ const MapPage: FC = () => {
                 </div>
                 
                 {detectionResult.calculatedPosition && (gunshotPosition || ambientPosition) && (
-                  <div className="bg-slate-800/50 rounded-lg p-3 mt-2">
-                    <p className="font-semibold text-white mb-2">📍 Coordenadas:</p>
-                    <div className="space-y-1 text-xs">
-                      <div className="flex items-center">
-                        <span className={`font-bold mr-2 ${gunshotPosition ? 'text-red-400' : 'text-amber-400'}`}>
-                          ● {gunshotPosition ? 'Real (Disparo):' : 'Real (Ambiente):'}
-                        </span>
-                        <span className="text-slate-300 font-mono">
-                          ({gunshotPosition ? gunshotPosition.lat.toFixed(6) : ambientPosition?.lat.toFixed(6)}, {gunshotPosition ? gunshotPosition.lon.toFixed(6) : ambientPosition?.lon.toFixed(6)})
-                        </span>
+                  <>
+                    <div className="bg-slate-800/50 rounded-lg p-3 mt-2">
+                      <p className="font-semibold text-white mb-2">📍 Coordenadas:</p>
+                      <div className="space-y-1 text-xs">
+                        <div className="flex items-center">
+                          <span className={`font-bold mr-2 ${gunshotPosition ? 'text-red-400' : 'text-amber-400'}`}>
+                            ● {gunshotPosition ? 'Real (Disparo):' : 'Real (Ambiente):'}
+                          </span>
+                          <span className="text-slate-300 font-mono">
+                            ({gunshotPosition ? gunshotPosition.lat.toFixed(6) : ambientPosition?.lat.toFixed(6)}, {gunshotPosition ? gunshotPosition.lon.toFixed(6) : ambientPosition?.lon.toFixed(6)})
+                          </span>
+                        </div>
+                        <div className="flex items-center">
+                          <span className="text-green-400 font-bold mr-2">● Calculada:</span>
+                          <span className="text-slate-300 font-mono">
+                            ({detectionResult.calculatedPosition.lat.toFixed(6)}, {detectionResult.calculatedPosition.lon.toFixed(6)})
+                          </span>
+                        </div>
                       </div>
-                      <div className="flex items-center">
-                        <span className="text-green-400 font-bold mr-2">● Calculada:</span>
-                        <span className="text-slate-300 font-mono">
-                          ({detectionResult.calculatedPosition.lat.toFixed(6)}, {detectionResult.calculatedPosition.lon.toFixed(6)})
+                    </div>
+                    
+                    <div className="bg-slate-800/50 rounded-lg p-3">
+                      <div className="flex justify-between items-center">
+                        <span className="text-slate-300 font-medium">Erro de posição:</span>
+                        <span className="text-orange-400 font-bold">
+                          {(() => {
+                            const realPos = gunshotPosition || ambientPosition!;
+                            const error = calculateDistance(realPos, detectionResult.calculatedPosition);
+                            return error.toFixed(2);
+                          })()} m
                         </span>
                       </div>
                     </div>
-                  </div>
+                  </>
                 )}
               </div>
             ) : (
@@ -862,10 +780,7 @@ const MapPage: FC = () => {
                       </div>
                       <button
                         onClick={() => {
-                          console.log(`Reproduzindo áudio do ${drone.droneId}`);
-                          playAudioFromBase64(drone.audioData, 0.7).catch(err => {
-                            console.error('Erro ao reproduzir:', err);
-                          });
+                          playAudioFromBase64(drone.audioData, 0.7).catch(() => {});
                         }}
                         className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white text-sm rounded-lg font-medium transition-colors active:scale-95"
                       >
@@ -899,24 +814,28 @@ const MapPage: FC = () => {
           )}
 
           {/* Legenda */}
-          <div className="bg-slate-700/30 backdrop-blur-sm rounded-lg p-3 border border-slate-600/30 shadow-md">
-            <h3 className="font-semibold text-slate-300 text-xs mb-2 uppercase tracking-wide">Legenda do Mapa</h3>
+          <div className="bg-slate-800/90 backdrop-blur-sm rounded-lg p-3 border border-slate-700 shadow-md">
+            <h3 className="font-semibold text-white text-xs mb-2 uppercase tracking-wide">Legenda do Mapa</h3>
             <div className="space-y-1.5 text-xs">
               <div className="flex items-center">
                 <span className="text-blue-400 font-bold text-lg mr-2">●</span>
-                <span className="text-slate-300">Área de operação</span>
+                <span className="text-slate-100">Área de operação</span>
               </div>
               <div className="flex items-center">
                 <span className="text-red-500 font-bold text-lg mr-2">●</span>
-                <span className="text-slate-300">Posição real do disparo</span>
+                <span className="text-slate-100">Posição real do disparo</span>
               </div>
               <div className="flex items-center">
                 <span className="text-amber-400 font-bold text-lg mr-2">●</span>
-                <span className="text-slate-300">Posição do som ambiente</span>
+                <span className="text-slate-100">Posição do som ambiente</span>
               </div>
               <div className="flex items-center">
                 <span className="text-green-500 font-bold text-lg mr-2">●</span>
-                <span className="text-slate-300">Posição calculada</span>
+                <span className="text-slate-100">Posição calculada</span>
+              </div>
+              <div className="flex items-center">
+                <span className="text-white/80 font-bold text-lg mr-2">---</span>
+                <span className="text-slate-100">Linha de erro</span>
               </div>
             </div>
           </div>
