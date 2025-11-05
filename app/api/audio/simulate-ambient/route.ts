@@ -1,36 +1,34 @@
 /**
  * API para simular um som ambiente (não-disparo) e gerar áudio para os drones
+ * Usa arquivos WAV reais do database
  */
 import { NextResponse, NextRequest } from 'next/server';
-import { simulateDroneAudioCapture, float32ArrayToBase64 } from '@/lib/audioUtils';
+import { simulateDroneAudioCapture, float32ArrayToBase64, wavBufferToFloat32Array } from '@/lib/audioUtils';
 import { calculateDistance, GeoPosition } from '@/lib/geoUtils';
+import { getRandomValidationFile, readAudioFile } from '@/lib/databaseUtils';
 
 /**
- * Gera um sinal de áudio sintético simulando som ambiente
+ * Carrega áudio ambiente real do database
  */
-function generateAmbientAudio(sampleRate: number = 44100, duration: number = 0.5): Float32Array {
-  const numSamples = Math.floor(sampleRate * duration);
-  const audio = new Float32Array(numSamples);
-
-  // Simula som ambiente: ruído consistente sem pico abrupto
-  for (let i = 0; i < numSamples; i++) {
-    const t = i / sampleRate;
-    
-    // Envelope suave (sem pico rápido)
-    const amplitude = 0.3 + Math.sin(2 * Math.PI * 0.5 * t) * 0.1; // Variação lenta
-    
-    // Ruído branco de baixa intensidade
-    const noise = (Math.random() - 0.5) * 0.4;
-    
-    // Componentes de frequência típicas de ambiente urbano
-    const lowFreq = Math.sin(2 * Math.PI * 60 * t) * 0.2; // Ruído de fundo
-    const midFreq = Math.sin(2 * Math.PI * 200 * t) * 0.15; // Vozes, etc
-    
-    // Combina componentes
-    audio[i] = amplitude * (0.5 * noise + 0.3 * lowFreq + 0.2 * midFreq);
+function loadAmbientAudio(): { audio: Float32Array; filename: string } | null {
+  const filename = getRandomValidationFile('ambient');
+  
+  if (!filename) {
+    console.error('Nenhum arquivo ambient encontrado no database');
+    return null;
   }
-
-  return audio;
+  
+  const buffer = readAudioFile(filename);
+  
+  if (!buffer) {
+    console.error(`Falha ao ler arquivo: ${filename}`);
+    return null;
+  }
+  
+  const audio = wavBufferToFloat32Array(buffer);
+  console.log(`Áudio ambiente carregado: ${filename} (${audio.length} samples)`);
+  
+  return { audio, filename };
 }
 
 export async function POST(request: NextRequest) {
@@ -44,8 +42,14 @@ export async function POST(request: NextRequest) {
 
     const soundPos: GeoPosition = ambientPosition;
 
-    // Gera áudio base de som ambiente
-    const originalAudio = generateAmbientAudio();
+    // Carrega áudio ambiente real do database
+    const audioData = loadAmbientAudio();
+    
+    if (!audioData) {
+      return NextResponse.json({ error: 'Failed to load ambient audio' }, { status: 500 });
+    }
+    
+    const { audio: originalAudio, filename } = audioData;
 
     // Simula captura por cada drone
     const droneAudioData = dronePositions.map((dronePos: any) => {
@@ -65,10 +69,15 @@ export async function POST(request: NextRequest) {
       };
     });
 
+    // Converte áudio original para base64 para reprodução no navegador
+    const originalAudioBase64 = float32ArrayToBase64(originalAudio);
+
     return NextResponse.json({
       success: true,
       ambientPosition: soundPos,
       droneAudioData,
+      originalAudio: originalAudioBase64,
+      filename,
       message: 'Ambient sound simulated successfully'
     });
 

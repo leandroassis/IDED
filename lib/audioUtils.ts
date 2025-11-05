@@ -120,3 +120,155 @@ export function float32ArrayToBase64(float32Array: Float32Array): string {
   
   return Buffer.from(binaryString, 'binary').toString('base64');
 }
+
+/**
+ * Converte um Buffer de arquivo WAV para Float32Array
+ * Assume WAV PCM 16-bit mono ou stereo
+ */
+export function wavBufferToFloat32Array(buffer: Buffer): Float32Array {
+  // Pula o header WAV (44 bytes padrão)
+  const headerSize = 44;
+  
+  // Lê informações do header
+  const numChannels = buffer.readUInt16LE(22);
+  const sampleRate = buffer.readUInt32LE(24);
+  const bitsPerSample = buffer.readUInt16LE(34);
+  
+  console.log(`WAV: ${numChannels} canal(is), ${sampleRate}Hz, ${bitsPerSample}-bit`);
+  
+  // Calcula número de samples
+  const dataSize = buffer.length - headerSize;
+  const bytesPerSample = bitsPerSample / 8;
+  const numSamples = Math.floor(dataSize / (bytesPerSample * numChannels));
+  
+  const audioData = new Float32Array(numSamples);
+  
+  // Converte para Float32Array normalizado [-1, 1]
+  if (bitsPerSample === 16) {
+    for (let i = 0; i < numSamples; i++) {
+      let sum = 0;
+      
+      // Se for stereo, faz a média dos canais para mono
+      for (let ch = 0; ch < numChannels; ch++) {
+        const offset = headerSize + (i * numChannels + ch) * bytesPerSample;
+        const sample = buffer.readInt16LE(offset);
+        sum += sample / 32768.0; // Normaliza para [-1, 1]
+      }
+      
+      audioData[i] = sum / numChannels;
+    }
+  } else if (bitsPerSample === 8) {
+    for (let i = 0; i < numSamples; i++) {
+      let sum = 0;
+      
+      for (let ch = 0; ch < numChannels; ch++) {
+        const offset = headerSize + (i * numChannels + ch) * bytesPerSample;
+        const sample = buffer.readUInt8(offset);
+        sum += (sample - 128) / 128.0; // Normaliza para [-1, 1]
+      }
+      
+      audioData[i] = sum / numChannels;
+    }
+  } else if (bitsPerSample === 32) {
+    // WAV 32-bit pode ser float ou int
+    // Verifica o audioFormat no header (offset 20)
+    const audioFormat = buffer.readUInt16LE(20);
+    
+    if (audioFormat === 3) {
+      // IEEE Float (32-bit float já está normalizado)
+      for (let i = 0; i < numSamples; i++) {
+        let sum = 0;
+        
+        for (let ch = 0; ch < numChannels; ch++) {
+          const offset = headerSize + (i * numChannels + ch) * bytesPerSample;
+          const sample = buffer.readFloatLE(offset);
+          sum += sample;
+        }
+        
+        audioData[i] = sum / numChannels;
+      }
+    } else {
+      // PCM 32-bit int
+      for (let i = 0; i < numSamples; i++) {
+        let sum = 0;
+        
+        for (let ch = 0; ch < numChannels; ch++) {
+          const offset = headerSize + (i * numChannels + ch) * bytesPerSample;
+          const sample = buffer.readInt32LE(offset);
+          sum += sample / 2147483648.0; // Normaliza para [-1, 1]
+        }
+        
+        audioData[i] = sum / numChannels;
+      }
+    }
+  } else if (bitsPerSample === 24) {
+    // WAV 24-bit (menos comum)
+    for (let i = 0; i < numSamples; i++) {
+      let sum = 0;
+      
+      for (let ch = 0; ch < numChannels; ch++) {
+        const offset = headerSize + (i * numChannels + ch) * bytesPerSample;
+        // Lê 3 bytes e converte para int32
+        const byte1 = buffer.readUInt8(offset);
+        const byte2 = buffer.readUInt8(offset + 1);
+        const byte3 = buffer.readUInt8(offset + 2);
+        
+        // Combina bytes (little-endian) e converte para signed
+        let sample = (byte3 << 16) | (byte2 << 8) | byte1;
+        if (sample & 0x800000) {
+          sample = sample - 0x1000000; // Converte para negativo se necessário
+        }
+        
+        sum += sample / 8388608.0; // Normaliza para [-1, 1]
+      }
+      
+      audioData[i] = sum / numChannels;
+    }
+  } else {
+    throw new Error(`Bits per sample não suportado: ${bitsPerSample}`);
+  }
+  
+  return audioData;
+}
+
+/**
+ * Converte Float32Array para Buffer WAV
+ */
+export function float32ArrayToWavBuffer(audioData: Float32Array, sampleRate: number = 44100): Buffer {
+  const numChannels = 1; // Mono
+  const bitsPerSample = 16;
+  const bytesPerSample = bitsPerSample / 8;
+  const blockAlign = numChannels * bytesPerSample;
+  const dataSize = audioData.length * blockAlign;
+  const bufferSize = 44 + dataSize;
+  
+  const buffer = Buffer.alloc(bufferSize);
+  
+  // RIFF header
+  buffer.write('RIFF', 0);
+  buffer.writeUInt32LE(bufferSize - 8, 4);
+  buffer.write('WAVE', 8);
+  
+  // fmt chunk
+  buffer.write('fmt ', 12);
+  buffer.writeUInt32LE(16, 16); // fmt chunk size
+  buffer.writeUInt16LE(1, 20); // PCM format
+  buffer.writeUInt16LE(numChannels, 22);
+  buffer.writeUInt32LE(sampleRate, 24);
+  buffer.writeUInt32LE(sampleRate * blockAlign, 28); // byte rate
+  buffer.writeUInt16LE(blockAlign, 32);
+  buffer.writeUInt16LE(bitsPerSample, 34);
+  
+  // data chunk
+  buffer.write('data', 36);
+  buffer.writeUInt32LE(dataSize, 40);
+  
+  // Audio data
+  for (let i = 0; i < audioData.length; i++) {
+    const sample = Math.max(-1, Math.min(1, audioData[i])); // Clamp
+    const intSample = Math.round(sample * 32767);
+    buffer.writeInt16LE(intSample, 44 + i * bytesPerSample);
+  }
+  
+  return buffer;
+}

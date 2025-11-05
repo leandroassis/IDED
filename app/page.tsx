@@ -4,6 +4,7 @@ import { useEffect, useState, FC } from "react";
 import Map from 'ol/Map';
 import Map1 from "@/components/map";
 import 'ol-ext/dist/ol-ext.css';
+import { playAudioFromBase64 } from '@/lib/audioPlayer';
 
 import { fromLonLat, toLonLat } from 'ol/proj';
 import VectorLayer from 'ol/layer/Vector';
@@ -36,6 +37,8 @@ const MapPage: FC = () => {
   const [isAnalyzing, setIsAnalyzing] = useState<boolean>(false);
   const [detectionResult, setDetectionResult] = useState<any>(null);
   const [mode, setMode] = useState<'idle' | 'settingArea' | 'settingGunshot' | 'settingAmbient'>('idle');
+  const [droneAudioBuffers, setDroneAudioBuffers] = useState<Array<{ droneId: string; audioData: string; distance: number }>>([]);
+  const [showDebugPanel, setShowDebugPanel] = useState<boolean>(true); // Modo demo
 
   // Renderiza drones no mapa
   useEffect(() => {
@@ -302,6 +305,17 @@ const MapPage: FC = () => {
         const simulateData = await simulateResponse.json();
         console.log('Áudio simulado:', simulateData);
 
+        // Armazena áudios dos drones para reprodução debug
+        setDroneAudioBuffers(simulateData.droneAudioData);
+
+        // Reproduz o áudio original no navegador
+        if (simulateData.originalAudio) {
+          console.log(`Reproduzindo áudio: ${simulateData.filename}`);
+          playAudioFromBase64(simulateData.originalAudio, 0.5).catch(err => {
+            console.error('Erro ao reproduzir áudio:', err);
+          });
+        }
+
         // Envia áudio de cada drone para análise
         const sessionId = `session-${Date.now()}`;
         
@@ -408,6 +422,17 @@ const MapPage: FC = () => {
 
         const simulateData = await simulateResponse.json();
         console.log('Áudio ambiente simulado:', simulateData);
+
+        // Armazena áudios dos drones para reprodução debug
+        setDroneAudioBuffers(simulateData.droneAudioData);
+
+        // Reproduz o áudio original no navegador
+        if (simulateData.originalAudio) {
+          console.log(`Reproduzindo áudio ambiente: ${simulateData.filename}`);
+          playAudioFromBase64(simulateData.originalAudio, 0.5).catch(err => {
+            console.error('Erro ao reproduzir áudio:', err);
+          });
+        }
 
         // Envia áudio de cada drone para análise
         const sessionId = `session-${Date.now()}`;
@@ -669,6 +694,79 @@ const MapPage: FC = () => {
                 )}
               </div>
             </div>
+          )}
+
+          {/* Painel Debug - Áudio dos Drones (Modo Demo) */}
+          {showDebugPanel && droneAudioBuffers.length > 0 && (
+            <div className="bg-gradient-to-br from-purple-900/40 to-indigo-900/40 backdrop-blur-sm rounded-lg p-4 border-2 border-purple-500/50 shadow-xl">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center">
+                  <div className="w-1 h-5 bg-purple-500 rounded-full mr-2"></div>
+                  <h3 className="font-semibold text-white text-lg">🎧 Debug: Áudio dos Drones</h3>
+                </div>
+                <button
+                  onClick={() => setShowDebugPanel(false)}
+                  className="text-slate-400 hover:text-white transition-colors"
+                  title="Fechar painel"
+                >
+                  ✕
+                </button>
+              </div>
+              
+              <div className="space-y-2 max-h-64 overflow-y-auto">
+                {droneAudioBuffers.map((drone, idx) => (
+                  <div 
+                    key={idx}
+                    className="bg-slate-800/60 rounded-lg p-3 border border-slate-600/40 hover:border-purple-500/60 transition-all"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center space-x-2">
+                          <span className="text-blue-400 font-bold">🚁 {drone.droneId}</span>
+                          <span className="text-slate-400 text-xs">
+                            📍 {drone.distance.toFixed(1)}m
+                          </span>
+                        </div>
+                        <div className="text-xs text-slate-500 mt-1">
+                          4s buffer com propagação simulada
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => {
+                          console.log(`Reproduzindo áudio do ${drone.droneId}`);
+                          playAudioFromBase64(drone.audioData, 0.7).catch(err => {
+                            console.error('Erro ao reproduzir:', err);
+                          });
+                        }}
+                        className="ml-3 px-4 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white rounded-lg font-medium transition-all duration-200 shadow-md hover:shadow-lg hover:shadow-purple-500/50 active:scale-95"
+                      >
+                        ▶️ Play
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              
+              <div className="mt-3 pt-3 border-t border-slate-600/50">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-slate-400">
+                    💡 Ouça como cada drone captou o áudio com atenuação e delay
+                  </span>
+                  <span className="text-purple-400 font-bold">
+                    {droneAudioBuffers.length} drone(s)
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {!showDebugPanel && droneAudioBuffers.length > 0 && (
+            <button
+              onClick={() => setShowDebugPanel(true)}
+              className="w-full py-2 bg-purple-600/20 hover:bg-purple-600/30 border border-purple-500/50 rounded-lg text-purple-300 text-sm font-medium transition-all"
+            >
+              🎧 Mostrar Painel de Debug
+            </button>
           )}
 
           {/* Legenda */}

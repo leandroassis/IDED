@@ -1,42 +1,34 @@
 /**
  * API para simular um disparo e gerar áudio para os drones
+ * Usa arquivos WAV reais do database
  */
 import { NextResponse, NextRequest } from 'next/server';
-import { simulateDroneAudioCapture, float32ArrayToBase64, extractAudioFeatures } from '@/lib/audioUtils';
+import { simulateDroneAudioCapture, float32ArrayToBase64, wavBufferToFloat32Array } from '@/lib/audioUtils';
 import { calculateDistance, GeoPosition } from '@/lib/geoUtils';
+import { getRandomValidationFile, readAudioFile } from '@/lib/databaseUtils';
 
 /**
- * Gera um sinal de áudio sintético simulando um disparo
+ * Carrega áudio de disparo real do database
  */
-function generateGunshotAudio(sampleRate: number = 44100, duration: number = 0.5): Float32Array {
-  const numSamples = Math.floor(sampleRate * duration);
-  const audio = new Float32Array(numSamples);
-
-  // Simula disparo: pico rápido seguido de decaimento exponencial
-  for (let i = 0; i < numSamples; i++) {
-    const t = i / sampleRate;
-    
-    // Envelope: pico rápido (0-0.01s) seguido de decaimento exponencial
-    let amplitude;
-    if (t < 0.01) {
-      // Ataque rápido
-      amplitude = t / 0.01;
-    } else {
-      // Decaimento exponencial
-      amplitude = Math.exp(-10 * (t - 0.01));
-    }
-
-    // Adiciona componentes de frequência (ruído branco filtrado)
-    const noise = (Math.random() - 0.5) * 2;
-    
-    // Componente de baixa frequência (explosão)
-    const lowFreq = Math.sin(2 * Math.PI * 100 * t);
-    
-    // Combina
-    audio[i] = amplitude * (0.7 * noise + 0.3 * lowFreq);
+function loadGunshotAudio(): { audio: Float32Array; filename: string } | null {
+  const filename = getRandomValidationFile('gunshot');
+  
+  if (!filename) {
+    console.error('Nenhum arquivo de gunshot encontrado no database');
+    return null;
   }
-
-  return audio;
+  
+  const buffer = readAudioFile(filename);
+  
+  if (!buffer) {
+    console.error(`Falha ao ler arquivo: ${filename}`);
+    return null;
+  }
+  
+  const audio = wavBufferToFloat32Array(buffer);
+  console.log(`Áudio de disparo carregado: ${filename} (${audio.length} samples)`);
+  
+  return { audio, filename };
 }
 
 export async function POST(request: NextRequest) {
@@ -50,8 +42,14 @@ export async function POST(request: NextRequest) {
 
     const shotPos: GeoPosition = gunshotPosition;
 
-    // Gera áudio base do disparo
-    const originalAudio = generateGunshotAudio();
+    // Carrega áudio real de disparo do database
+    const audioData = loadGunshotAudio();
+    
+    if (!audioData) {
+      return NextResponse.json({ error: 'Failed to load gunshot audio' }, { status: 500 });
+    }
+    
+    const { audio: originalAudio, filename } = audioData;
 
     // Simula captura por cada drone
     const droneAudioData = dronePositions.map((dronePos: any) => {
@@ -71,10 +69,15 @@ export async function POST(request: NextRequest) {
       };
     });
 
+    // Converte áudio original para base64 para reprodução no navegador
+    const originalAudioBase64 = float32ArrayToBase64(originalAudio);
+
     return NextResponse.json({
       success: true,
       gunshotPosition: shotPos,
       droneAudioData,
+      originalAudio: originalAudioBase64,
+      filename,
       message: 'Gunshot simulated successfully'
     });
 
